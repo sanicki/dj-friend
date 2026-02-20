@@ -3,7 +3,6 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.djfriend.app">
 
-    <!-- Permissions -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -20,13 +19,12 @@
     <application
         android:name=".DjFriendApp"
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@android:drawable/ic_media_play"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@android:drawable/ic_media_play"
         android:supportsRtl="true"
         android:theme="@style/Theme.DjFriend">
 
-        <!-- Main Entry Activity -->
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
@@ -37,14 +35,12 @@
             </intent-filter>
         </activity>
 
-        <!-- Foreground Service -->
         <service
             android:name=".service.DjFriendService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
-        <!-- NotificationListenerService to observe MediaSession -->
         <service
             android:name=".service.MediaSessionListenerService"
             android:exported="true"
@@ -55,7 +51,6 @@
             </intent-filter>
         </service>
 
-        <!-- Boot Receiver -->
         <receiver
             android:name=".receiver.BootReceiver"
             android:exported="true">
@@ -64,12 +59,10 @@
             </intent-filter>
         </receiver>
 
-        <!-- Notification Action Receiver -->
         <receiver
             android:name=".receiver.NotificationActionReceiver"
             android:exported="false" />
 
-        <!-- FileProvider for sharing -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
