@@ -1,0 +1,87 @@
+name: Build & Sign Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+      SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+      SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+      LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 --decode > keystore.jks
+
+      - name: Grant Gradle execute permission
+        run: chmod +x gradlew
+
+      - name: Inject Last.fm API Key into local.properties
+        run: echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+
+      - name: Build signed release APK
+        run: |
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/keystore.jks \
+            -Pandroid.injected.signing.store.password=$SIGNING_STORE_PASSWORD \
+            -Pandroid.injected.signing.key.alias=$SIGNING_KEY_ALIAS \
+            -Pandroid.injected.signing.key.password=$SIGNING_KEY_PASSWORD
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: djfriend-release
+          path: app/build/outputs/apk/release/*.apk
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+---
+
+## Architecture Summary
+
+Here's how the pieces connect:
+```
+MainActivity ──starts──► DjFriendService (ForegroundService)
+                                │
+                    MediaSessionManager.getActiveSessions()
+                                │
+                    MediaController.Callback
+                         ├─ onMetadataChanged → isMusicContent() → fetchSuggestions()
+                         └─ onPlaybackStateChanged → startTimeout() / cancelTimeout()
+                                │
+                    LastFmApiService (Retrofit)
+                    ┌───────────┼──────────────┐
+               getTrackInfo  getSimilarTracks  getSimilarArtists
+                                │                   └── getArtistTopTracks (Fallback A)
+                                │
+                    findLocalTrack() via MediaStore
+                         └── FuzzyMatcher.levenshtein()
+                                │
+                    NotificationCompat.Builder (BigTextStyle)
+                         └── 3 Action buttons → NotificationActionReceiver
+                                    ├── ACTION_PLAY_LOCAL → Intent.ACTION_VIEW audio/*
+                                    └── ACTION_OPEN_SPOTIFY → open.spotify.com/search/...
