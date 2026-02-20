@@ -19,7 +19,6 @@ import com.djfriend.app.model.SuggestionResult
 import com.djfriend.app.receiver.NotificationActionReceiver
 import com.djfriend.app.util.FuzzyMatcher
 import kotlinx.coroutines.*
-import kotlin.math.min
 
 class DjFriendService : Service() {
 
