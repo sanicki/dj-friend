@@ -3,85 +3,74 @@ name: Build & Sign Release APK
 on:
   push:
     tags:
-      - 'v*'
-  workflow_dispatch:
+      - 'v*'           # triggers on tags like v1.0.0
+  workflow_dispatch:   # also allows manual trigger from GitHub UI
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
-    env:
-      SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-      SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-      SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-      LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
-
     steps:
+      # 1. Check out the code
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Set up Java 17 (required for Android Gradle Plugin 8+)
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
+      # 3. Decode the keystore from the base64 secret and write it to disk
       - name: Decode Keystore
         run: |
-          echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 --decode > keystore.jks
+          echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 --decode > $GITHUB_WORKSPACE/keystore.jks
 
+      # 4. Inject the Last.fm API key into local.properties so build.gradle can read it
+      - name: Inject Last.fm API Key
+        run: |
+          echo "LASTFM_API_KEY=${{ secrets.LASTFM_API_KEY }}" >> local.properties
+
+      # 5. Make Gradle wrapper executable
       - name: Grant Gradle execute permission
         run: chmod +x gradlew
 
-      - name: Inject Last.fm API Key into local.properties
-        run: echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+      # 6. Cache Gradle downloads to speed up future runs
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-
 
+      # 7. Build and sign the release APK
       - name: Build signed release APK
         run: |
           ./gradlew assembleRelease \
             -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/keystore.jks \
-            -Pandroid.injected.signing.store.password=$SIGNING_STORE_PASSWORD \
-            -Pandroid.injected.signing.key.alias=$SIGNING_KEY_ALIAS \
-            -Pandroid.injected.signing.key.password=$SIGNING_KEY_PASSWORD
+            -Pandroid.injected.signing.store.password=${{ secrets.SIGNING_STORE_PASSWORD }} \
+            -Pandroid.injected.signing.key.alias=${{ secrets.SIGNING_KEY_ALIAS }} \
+            -Pandroid.injected.signing.key.password=${{ secrets.SIGNING_KEY_PASSWORD }}
 
+      # 8. Upload the APK so you can download it from the Actions tab
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: djfriend-release
+          name: djfriend-release-apk
           path: app/build/outputs/apk/release/*.apk
+          retention-days: 30
 
+      # 9. If this run was triggered by a version tag, create a GitHub Release
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: app/build/outputs/apk/release/*.apk
+          name: "DJ Friend ${{ github.ref_name }}"
+          body: "Automated release built by GitHub Actions."
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
----
-
-## Architecture Summary
-
-Here's how the pieces connect:
-```
-MainActivity ──starts──► DjFriendService (ForegroundService)
-                                │
-                    MediaSessionManager.getActiveSessions()
-                                │
-                    MediaController.Callback
-                         ├─ onMetadataChanged → isMusicContent() → fetchSuggestions()
-                         └─ onPlaybackStateChanged → startTimeout() / cancelTimeout()
-                                │
-                    LastFmApiService (Retrofit)
-                    ┌───────────┼──────────────┐
-               getTrackInfo  getSimilarTracks  getSimilarArtists
-                                │                   └── getArtistTopTracks (Fallback A)
-                                │
-                    findLocalTrack() via MediaStore
-                         └── FuzzyMatcher.levenshtein()
-                                │
-                    NotificationCompat.Builder (BigTextStyle)
-                         └── 3 Action buttons → NotificationActionReceiver
-                                    ├── ACTION_PLAY_LOCAL → Intent.ACTION_VIEW audio/*
-                                    └── ACTION_OPEN_SPOTIFY → open.spotify.com/search/...
