@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
+import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.Handler
 import android.os.IBinder
@@ -24,6 +25,8 @@ import com.djfriend.app.api.RetrofitClient
 import com.djfriend.app.receiver.NotificationActionReceiver
 import com.djfriend.app.util.FuzzyMatcher
 import kotlinx.coroutines.*
+import org.json.JSONArray
+import org.json.JSONObject
 
 class DjFriendService : Service() {
 
@@ -33,11 +36,16 @@ class DjFriendService : Service() {
         const val ACTION_PLAY_LOCAL      = "com.djfriend.ACTION_PLAY_LOCAL"
         const val ACTION_OPEN_SPOTIFY    = "com.djfriend.ACTION_OPEN_SPOTIFY"
         const val ACTION_SERVICE_STOPPED = "com.djfriend.ACTION_SERVICE_STOPPED"
+        // Broadcast from service → UI with current state
+        const val ACTION_STATE_UPDATE    = "com.djfriend.ACTION_STATE_UPDATE"
+        // Broadcast from UI → service requesting a page of suggestions
+        const val ACTION_REQUEST_PAGE    = "com.djfriend.ACTION_REQUEST_PAGE"
         const val EXTRA_MEDIA_URI        = "extra_media_uri"
         const val EXTRA_ARTIST           = "extra_artist"
         const val EXTRA_TRACK            = "extra_track"
-
-        private const val MIN_MATCH_SCORE = 0.8f
+        const val EXTRA_STATE_JSON       = "extra_state_json"
+        const val EXTRA_PAGE_OFFSET      = "extra_page_offset"  // 0, 10, 20, ...
+        const val PAGE_SIZE              = 10
 
         val TIMEOUT_OPTIONS = mapOf(
             "1 min"  to 60_000L,
@@ -51,12 +59,9 @@ class DjFriendService : Service() {
             RegexOption.IGNORE_CASE
         )
         private const val MAX_DURATION_MS = 10 * 60 * 1000L
+        const val CHECK = "\u2714"
+        const val CROSS = "\u2717"
 
-        private const val CHECK = "\u2714"  // ✔
-        private const val CROSS = "\u2717"  // ✗
-
-        // Normalise "The Cranberries" / "Cranberries, The" to a canonical key
-        // Used for both local library matching and Last.fm artist de-duplication
         fun canonicalArtist(name: String) = FuzzyMatcher.normalizeArtist(name)
     }
 
@@ -67,16 +72,23 @@ class DjFriendService : Service() {
     private lateinit var notificationManager: NotificationManager
     private lateinit var mediaSessionManager: MediaSessionManager
 
-    private var currentArtist = ""
-    private var currentTrack  = ""
+    private var currentArtist        = ""
+    private var currentTrack         = ""
+    private var currentPlayerPackage = ""  // package of the currently/most-recently active player
+    private var currentPlayerLastActive = 0L  // timestamp to break ties
+
+    // All fetched candidates for the current track, sorted by match score descending
+    // This pool is reused for pagination — fetched once per track change
+    private var allCandidates = mutableListOf<SuggestionResult>()
+    private var hasMoreCandidates = false  // true if Last.fm had ≥ 0.2 scoring beyond current pool
+
     private var timeoutRunnable: Runnable? = null
     private var timeoutDurationMs = TIMEOUT_OPTIONS["3 min"]!!
 
-    // Bug 1 fix: track which package "owns" the current suggestion set,
-    // and which package is considered the "primary" player.
-    // We ignore metadata changes from Spotify if a non-Spotify player is active.
-    private val registeredControllers = mutableMapOf<MediaController, String>() // controller -> packageName
-    private var primaryPlayerPackage  = ""   // the first non-Spotify app to play something
+    // Map of active MediaControllers — registered once, cleaned up when sessions end
+    private val registeredControllers = mutableMapOf<MediaController, String>()
+
+    // ─── MediaController Callback ─────────────────────────────────────────────
 
     private val mediaControllerCallback = object : MediaController.Callback() {
         override fun onMetadataChanged(metadata: MediaMetadata?) {
@@ -84,45 +96,63 @@ class DjFriendService : Service() {
             val artist   = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: return
             val track    = metadata.getString(MediaMetadata.METADATA_KEY_TITLE)  ?: return
             val duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)
-
-            // Find which package this callback belongs to
-            val senderPackage = registeredControllers.entries
-                .firstOrNull { it.key.metadata == metadata }
-                ?.value ?: return
-
-            val isSpotify = senderPackage == "com.spotify.music"
-
-            // If a non-Spotify player was established first, ignore Spotify metadata
-            if (isSpotify && primaryPlayerPackage.isNotEmpty() &&
-                primaryPlayerPackage != "com.spotify.music") return
-
-            // Record primary player on first non-Spotify activity
-            if (!isSpotify && primaryPlayerPackage.isEmpty()) {
-                primaryPlayerPackage = senderPackage
-            }
-
+            // Find which controller fired this — match by identity
+            val senderController = registeredControllers.keys
+                .firstOrNull { it.metadata === metadata } ?: return
+            val senderPackage = registeredControllers[senderController] ?: return
+            // Only process if this controller is currently playing or is the most-recent player
+            if (!isActivePlayer(senderController, senderPackage)) return
             cancelTimeout()
             if (isMusicContent(track, duration) &&
                 (artist != currentArtist || track != currentTrack)) {
-                currentArtist = artist
-                currentTrack  = track
+                currentArtist        = artist
+                currentTrack         = track
+                currentPlayerPackage = senderPackage
+                allCandidates.clear()
                 fetchSuggestions(artist, track)
             }
         }
 
-        override fun onPlaybackStateChanged(state: android.media.session.PlaybackState?) {
-            val playing = state?.state == android.media.session.PlaybackState.STATE_PLAYING
-            if (!playing && timeoutDurationMs > 0) startTimeout() else cancelTimeout()
+        override fun onPlaybackStateChanged(state: PlaybackState?) {
+            val playing = state?.state == PlaybackState.STATE_PLAYING
+            if (playing) cancelTimeout() else if (timeoutDurationMs > 0) startTimeout()
         }
+    }
+
+    // Returns true if this controller should be considered authoritative right now.
+    // Priority: currently STATE_PLAYING > most recently became active.
+    private fun isActivePlayer(controller: MediaController, pkg: String): Boolean {
+        val sessions = try {
+            mediaSessionManager.getActiveSessions(
+                android.content.ComponentName(this, MediaSessionListenerService::class.java)
+            )
+        } catch (e: SecurityException) { return false }
+
+        // Is any other controller currently playing?
+        val playingControllers = sessions.filter {
+            it.playbackState?.state == PlaybackState.STATE_PLAYING
+        }
+        if (playingControllers.isNotEmpty()) {
+            // Accept only if this controller is among the playing ones
+            return controller in playingControllers
+        }
+        // Nothing currently playing — accept the most-recently-active package
+        return pkg == currentPlayerPackage || currentPlayerPackage.isEmpty()
     }
 
     private val rescanReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == MediaSessionListenerService.ACTION_RESCAN) observeMediaSessions()
+            when (intent?.action) {
+                MediaSessionListenerService.ACTION_RESCAN -> observeMediaSessions()
+                ACTION_REQUEST_PAGE -> {
+                    val offset = intent.getIntExtra(EXTRA_PAGE_OFFSET, 0)
+                    broadcastStateUpdate(offset)
+                }
+            }
         }
     }
 
-    // Lifecycle
+    // ─── Lifecycle ────────────────────────────────────────────────────────────
 
     override fun onCreate() {
         super.onCreate()
@@ -130,11 +160,11 @@ class DjFriendService : Service() {
         mediaSessionManager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
         createNotificationChannel()
         loadPreferences()
-        ContextCompat.registerReceiver(
-            this, rescanReceiver,
-            IntentFilter(MediaSessionListenerService.ACTION_RESCAN),
-            ContextCompat.RECEIVER_NOT_EXPORTED
-        )
+        val filter = IntentFilter().apply {
+            addAction(MediaSessionListenerService.ACTION_RESCAN)
+            addAction(ACTION_REQUEST_PAGE)
+        }
+        ContextCompat.registerReceiver(this, rescanReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -157,63 +187,61 @@ class DjFriendService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        stopSelf()
-        super.onTaskRemoved(rootIntent)
-    }
+    override fun onTaskRemoved(rootIntent: Intent?) { stopSelf(); super.onTaskRemoved(rootIntent) }
 
-    // Media Session
+    // ─── Media Session ────────────────────────────────────────────────────────
 
     private fun observeMediaSessions() {
         try {
             val sessions = mediaSessionManager.getActiveSessions(
                 android.content.ComponentName(this, MediaSessionListenerService::class.java)
             )
-
             sessions.forEach { controller ->
                 if (!registeredControllers.containsKey(controller)) {
                     val pkg = controller.packageName ?: ""
                     controller.registerCallback(mediaControllerCallback, mainHandler)
                     registeredControllers[controller] = pkg
-
-                    // If Spotify is NOT the primary player, skip Spotify's initial metadata
-                    val isSpotify = pkg == "com.spotify.music"
-                    if (isSpotify && primaryPlayerPackage.isNotEmpty() &&
-                        primaryPlayerPackage != "com.spotify.music") return@forEach
-
+                    // Track which package is currently playing
+                    if (controller.playbackState?.state == PlaybackState.STATE_PLAYING) {
+                        currentPlayerPackage  = pkg
+                        currentPlayerLastActive = System.currentTimeMillis()
+                    }
+                    // Immediately check metadata for already-playing tracks
                     controller.metadata?.let { meta ->
                         val artist   = meta.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: return@let
                         val track    = meta.getString(MediaMetadata.METADATA_KEY_TITLE)  ?: return@let
                         val duration = meta.getLong(MediaMetadata.METADATA_KEY_DURATION)
-                        if (!isSpotify && primaryPlayerPackage.isEmpty()) {
-                            primaryPlayerPackage = pkg
-                        }
-                        if (isMusicContent(track, duration) &&
+                        if (controller.playbackState?.state == PlaybackState.STATE_PLAYING &&
+                            isMusicContent(track, duration) &&
                             (artist != currentArtist || track != currentTrack)) {
-                            currentArtist = artist
-                            currentTrack  = track
+                            currentArtist        = artist
+                            currentTrack         = track
+                            currentPlayerPackage = pkg
+                            allCandidates.clear()
                             fetchSuggestions(artist, track)
                         }
                     }
                 }
             }
-
-            // Clean up dead controllers; if Spotify's session ended, clear its primacy
-            val removed = registeredControllers.keys.filter { it !in sessions }
-            removed.forEach { c ->
+            // Clean up dead sessions; update currentPlayerPackage if needed
+            val deadControllers = registeredControllers.keys.filter { it !in sessions }
+            deadControllers.forEach { c ->
                 val pkg = registeredControllers[c]
-                if (pkg == primaryPlayerPackage && pkg == "com.spotify.music") {
-                    primaryPlayerPackage = ""
+                if (pkg == currentPlayerPackage) {
+                    // Find the next most-recently-active playing session, if any
+                    val stillPlaying = sessions.firstOrNull {
+                        it.playbackState?.state == PlaybackState.STATE_PLAYING
+                    }
+                    currentPlayerPackage = stillPlaying?.packageName ?: ""
                 }
                 registeredControllers.remove(c)
             }
-
         } catch (e: SecurityException) {
-            updateNotification("Grant Notification Access in Settings", emptyList())
+            updateNotification("Grant Notification Access in Settings", emptyList(), 0)
         }
     }
 
-    // Music Classification
+    // ─── Music Classification ─────────────────────────────────────────────────
 
     private fun isMusicContent(title: String, durationMs: Long): Boolean {
         if (NON_MUSIC_REGEX.containsMatchIn(title)) return false
@@ -221,80 +249,85 @@ class DjFriendService : Service() {
         return durationMs <= 0
     }
 
-    // Recommendation Engine
+    // ─── Recommendation Engine ────────────────────────────────────────────────
 
     private fun fetchSuggestions(artist: String, track: String) {
         serviceScope.launch {
-            updateNotification("Finding suggestions...", emptyList())
+            updateNotification("Finding suggestions...", emptyList(), 0)
 
             val trackInfo = runCatching {
                 lastFmApi.getTrackInfo(artist = artist, track = track, apiKey = apiKey)
             }.getOrNull()
 
             if (trackInfo?.track == null) {
-                updateNotification("No Last.fm match for $track", emptyList())
+                updateNotification("No Last.fm match for $track", emptyList(), 0)
+                broadcastStateUpdate(0)
                 return@launch
             }
 
-            val suggestions = mutableListOf<SuggestionResult>()
-            // Seed used-artists with both canonical forms of the current artist
-            val usedArtists = mutableSetOf(
-                canonicalArtist(artist),
-                artist.lowercase()
-            )
+            val usedArtists = mutableSetOf(canonicalArtist(artist), artist.lowercase())
+            val rawCandidates = mutableListOf<SuggestionResult>()
 
-            // Primary: track.getSimilar
+            // Fetch up to 50 similar tracks, sorted by match descending (Last.fm returns them sorted)
             val similarTracks = runCatching {
-                lastFmApi.getSimilarTracks(artist, track, 30, apiKey)
-            }.getOrNull()?.similarTracks?.tracks ?: emptyList()
+                lastFmApi.getSimilarTracks(artist, track, 50, apiKey)
+            }.getOrNull()?.similarTracks?.tracks
+                ?.sortedByDescending { it.match ?: 0f }
+                ?: emptyList()
+
+            // Track which have match >= 0.2 beyond what we'll show, to know if "More" is possible
+            var foundBelowThreshold = false
 
             similarTracks.forEach { t ->
-                if (suggestions.size >= 3) return@forEach
                 val canonical = canonicalArtist(t.artist.name)
                 if (canonical in usedArtists || t.artist.name.lowercase() in usedArtists) return@forEach
-                suggestions += resolveSuggestion(t.artist.name, t.name)
+                val score = t.match ?: 0f
+                if (score < 0.2f) { foundBelowThreshold = true; return@forEach }
+                rawCandidates += resolveSuggestion(t.artist.name, t.name)
                 usedArtists += canonical
                 usedArtists += t.artist.name.lowercase()
             }
+            hasMoreCandidates = foundBelowThreshold.not() && similarTracks.any { (it.match ?: 0f) >= 0.2f }
 
-            // Fallback A: artist.getSimilar
-            if (suggestions.size < 3) {
+            // Fallback A: artist.getSimilar if we have fewer than 3 candidates
+            if (rawCandidates.size < 3) {
                 val listeners = trackInfo.track.listeners?.toLongOrNull() ?: Long.MAX_VALUE
-                if (listeners < 10_000 || suggestions.isEmpty()) {
+                if (listeners < 10_000 || rawCandidates.isEmpty()) {
                     runCatching { lastFmApi.getSimilarArtists(artist, 10, apiKey) }
                         .getOrNull()?.similarArtists?.artists
                         ?.forEach { simArtist ->
-                            if (suggestions.size >= 3) return@forEach
+                            if (rawCandidates.size >= 3) return@forEach
                             val canonical = canonicalArtist(simArtist.name)
-                            if (canonical in usedArtists ||
-                                simArtist.name.lowercase() in usedArtists) return@forEach
-                            runCatching {
-                                lastFmApi.getArtistTopTracks(simArtist.name, 1, apiKey)
-                            }.getOrNull()?.topTracks?.tracks?.firstOrNull()?.let {
-                                suggestions += resolveSuggestion(simArtist.name, it.name)
-                                usedArtists += canonical
-                                usedArtists += simArtist.name.lowercase()
-                            }
+                            if (canonical in usedArtists || simArtist.name.lowercase() in usedArtists) return@forEach
+                            runCatching { lastFmApi.getArtistTopTracks(simArtist.name, 1, apiKey) }
+                                .getOrNull()?.topTracks?.tracks?.firstOrNull()?.let {
+                                    rawCandidates += resolveSuggestion(simArtist.name, it.name)
+                                    usedArtists += canonical
+                                    usedArtists += simArtist.name.lowercase()
+                                }
                         }
                 }
             }
 
-            // Fallback B: current artist's other tracks
-            if (suggestions.isEmpty()) {
+            // Fallback B
+            if (rawCandidates.isEmpty()) {
                 runCatching { lastFmApi.getArtistTopTracks(artist, 5, apiKey) }
                     .getOrNull()?.topTracks?.tracks
                     ?.filter { it.name.lowercase() != track.lowercase() }
                     ?.take(3)
-                    ?.forEach { suggestions += resolveSuggestion(artist, it.name) }
+                    ?.forEach { rawCandidates += resolveSuggestion(artist, it.name) }
             }
 
+            allCandidates = rawCandidates
             withContext(Dispatchers.Main) {
-                updateNotification("Suggested for you:", suggestions)
+                val notifSlice = allCandidates.take(3)
+                updateNotification("Suggested for you:", notifSlice, 0)
+                broadcastStateUpdate(0)
             }
         }
     }
 
-    // Local Library
+    // ─── Local Library ────────────────────────────────────────────────────────
 
     private suspend fun resolveSuggestion(artist: String, track: String): SuggestionResult =
         withContext(Dispatchers.IO) {
@@ -309,29 +342,22 @@ class DjFriendService : Service() {
             MediaStore.Audio.Media.ARTIST
         )
         val cursor = contentResolver.query(
-            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-            projection,
-            "${MediaStore.Audio.Media.IS_MUSIC} = 1",
-            null, null
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection,
+            "${MediaStore.Audio.Media.IS_MUSIC} = 1", null, null
         ) ?: return null
 
         var bestUri: Uri? = null
-        var bestScore = Int.MAX_VALUE
-        // Normalise using canonical artist (strips "The " prefix, handles "X, The" form)
-        val targetArtistKey = canonicalArtist(artist)
-        val targetTrackKey  = FuzzyMatcher.normalize(track)
-        val target          = "$targetArtistKey $targetTrackKey"
+        var bestScore     = Int.MAX_VALUE
+        val target        = "${canonicalArtist(artist)} ${FuzzyMatcher.normalize(track)}"
 
         cursor.use { c ->
             val idIdx     = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
             val titleIdx  = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
             val artistIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
             while (c.moveToNext()) {
-                val candidateArtist = canonicalArtist(c.getString(artistIdx))
-                val candidateTrack  = FuzzyMatcher.normalize(c.getString(titleIdx))
-                val candidate       = "$candidateArtist $candidateTrack"
-                val dist            = FuzzyMatcher.levenshtein(target, candidate)
-                val threshold       = (target.length * 0.35).toInt()
+                val candidate = "${canonicalArtist(c.getString(artistIdx))} ${FuzzyMatcher.normalize(c.getString(titleIdx))}"
+                val dist      = FuzzyMatcher.levenshtein(target, candidate)
+                val threshold = (target.length * 0.35).toInt()
                 if (dist < bestScore && dist <= threshold) {
                     bestScore = dist
                     bestUri   = Uri.withAppendedPath(
@@ -344,7 +370,44 @@ class DjFriendService : Service() {
         return bestUri
     }
 
-    // Timeout
+    // ─── State Broadcast (service → UI) ──────────────────────────────────────
+
+    fun broadcastStateUpdate(pageOffset: Int) {
+        val page       = allCandidates.drop(pageOffset).take(PAGE_SIZE)
+        val totalKnown = allCandidates.size
+        val canGoBack  = pageOffset > 0
+        val canGoMore  = (pageOffset + PAGE_SIZE) < totalKnown
+
+        val suggestionsJson = JSONArray().apply {
+            page.forEachIndexed { i, s ->
+                put(JSONObject().apply {
+                    put("artist",   s.artist)
+                    put("track",    s.track)
+                    put("isLocal",  s.isLocal)
+                    put("localUri", s.localUri?.toString() ?: "")
+                    put("index",    pageOffset + i)
+                })
+            }
+        }
+
+        val stateJson = JSONObject().apply {
+            put("currentArtist",   currentArtist)
+            put("currentTrack",    currentTrack)
+            put("currentPackage",  currentPlayerPackage)
+            put("pageOffset",      pageOffset)
+            put("canGoBack",       canGoBack)
+            put("canGoMore",       canGoMore)
+            put("suggestions",     suggestionsJson)
+        }
+
+        sendBroadcast(
+            Intent(ACTION_STATE_UPDATE)
+                .setPackage(packageName)
+                .putExtra(EXTRA_STATE_JSON, stateJson.toString())
+        )
+    }
+
+    // ─── Timeout ──────────────────────────────────────────────────────────────
 
     private fun startTimeout() {
         timeoutRunnable = Runnable { stopSelf() }
@@ -361,7 +424,7 @@ class DjFriendService : Service() {
         timeoutDurationMs = TIMEOUT_OPTIONS[prefs.getString("timeout", "3 min")] ?: 180_000L
     }
 
-    // Notification
+    // ─── Notification ─────────────────────────────────────────────────────────
 
     private fun createNotificationChannel() {
         NotificationChannel(CHANNEL_ID, "DJ Friend", NotificationManager.IMPORTANCE_LOW).apply {
@@ -381,36 +444,36 @@ class DjFriendService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-    private fun updateNotification(statusText: String, suggestions: List<SuggestionResult>) {
+    private fun updateNotification(statusText: String, suggestions: List<SuggestionResult>, pageOffset: Int) {
         val prefs      = getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
         val copyFormat = prefs.getString("copy_format", "song_only") ?: "song_only"
 
         val bigText = SpannableStringBuilder()
         if (suggestions.isEmpty()) {
-            bigText.append("Searching Last.fm...")
-        } else {
             bigText.append(statusText)
-            bigText.append("\n")
+        } else {
+            bigText.append("Suggested for you:\n")
             suggestions.forEachIndexed { i, s ->
                 val symbol = if (s.isLocal) CHECK else CROSS
-                val line   = "${i + 1}. ${s.track} by ${s.artist} $symbol\n"
+                val line   = "${pageOffset + i + 1}. ${s.track} by ${s.artist} $symbol\n"
                 if (s.isLocal) {
                     val start = bigText.length
                     bigText.append(line)
-                    bigText.setSpan(
-                        StyleSpan(Typeface.BOLD),
-                        start, bigText.length,
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                    )
+                    bigText.setSpan(StyleSpan(Typeface.BOLD), start, bigText.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 } else {
                     bigText.append(line)
                 }
             }
         }
 
+        // Notification title: "Now: Title by Artist"
+        val nowTitle = if (currentTrack.isNotEmpty() && currentArtist.isNotEmpty())
+            "Now: $currentTrack by $currentArtist"
+        else "DJ Friend"
+
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle("Now: $currentTrack")
+            .setContentTitle(nowTitle)
             .setContentText(statusText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
             .setOngoing(false)
@@ -418,11 +481,12 @@ class DjFriendService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setDeleteIntent(buildStopServicePendingIntent())
 
-        suggestions.forEachIndexed { i, s ->
+        // Max 3 action buttons
+        suggestions.take(3).forEachIndexed { i, s ->
             val icon = if (s.isLocal) android.R.drawable.ic_menu_save
                        else           android.R.drawable.ic_menu_search
             builder.addAction(icon, "Suggestion ${i + 1}",
-                buildActionPendingIntent(i, s, copyFormat))
+                buildActionPendingIntent(pageOffset + i, s, copyFormat))
         }
 
         notificationManager.notify(NOTIFICATION_ID, builder.build())
@@ -432,31 +496,26 @@ class DjFriendService : Service() {
         val intent = Intent(this, NotificationActionReceiver::class.java).apply {
             action = NotificationActionReceiver.ACTION_STOP_SERVICE
         }
-        return PendingIntent.getBroadcast(
-            this, 999, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        return PendingIntent.getBroadcast(this, 999, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
-    private fun buildActionPendingIntent(
-        index: Int,
+    fun buildActionPendingIntent(
+        globalIndex: Int,
         s: SuggestionResult,
         copyFormat: String
     ): PendingIntent {
         val intent = Intent(this, NotificationActionReceiver::class.java).apply {
-            action = if (s.isLocal) ACTION_PLAY_LOCAL else ACTION_OPEN_SPOTIFY
+            // Bug 2 fix: unique action string per suggestion so Android never coalesces intents
+            action = if (s.isLocal) "${ACTION_PLAY_LOCAL}_$globalIndex"
+                     else           "${ACTION_OPEN_SPOTIFY}_$globalIndex"
             putExtra(EXTRA_ARTIST, s.artist)
             putExtra(EXTRA_TRACK, s.track)
             putExtra(NotificationActionReceiver.EXTRA_COPY_FORMAT, copyFormat)
+            putExtra(NotificationActionReceiver.EXTRA_IS_LOCAL, s.isLocal)
             s.localUri?.let { putExtra(EXTRA_MEDIA_URI, it.toString()) }
         }
-        // Bug 2 fix: use a unique request code per suggestion content, not just index.
-        // Android reuses PendingIntents with the same request code, so tapping
-        // Suggestion 2 after Suggestion 1 was tapped would replay Suggestion 1's intent.
-        val requestCode = (s.artist + s.track + index).hashCode()
-        return PendingIntent.getBroadcast(
-            this, requestCode, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        return PendingIntent.getBroadcast(this, globalIndex, intent,
+            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 }
