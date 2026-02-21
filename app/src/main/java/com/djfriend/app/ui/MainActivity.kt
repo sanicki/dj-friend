@@ -338,13 +338,19 @@ fun SettingsScreen(onBack: () -> Unit) {
     var spotifyInstalled   by remember { mutableStateOf(isSpotifyInstalled()) }
     var spotiflacInstalled by remember { mutableStateOf(isSpotiflacInstalled()) }
     var copyFormat           by remember { mutableStateOf(prefs.getString("copy_format", "song_only") ?: "song_only") }
-    var songsPerPage         by remember { mutableStateOf(prefs.getInt("songs_per_page", Int.MAX_VALUE)) }
-    var copyDropdownExpanded by remember { mutableStateOf(false) }
-    var pageDropdownExpanded by remember { mutableStateOf(false) }
+    var songsPerPage          by remember { mutableStateOf(prefs.getInt("songs_per_page", Int.MAX_VALUE)) }
+    var webAction             by remember { mutableStateOf(prefs.getString("web_action", "spotiflac") ?: "spotiflac") }
+    var copyDropdownExpanded  by remember { mutableStateOf(false) }
+    var webActionExpanded     by remember { mutableStateOf(false) }
+    var pageDropdownExpanded  by remember { mutableStateOf(false) }
 
     val copyFormatOptions = listOf(
         "song_only"   to "Copy song name",
         "artist_song" to "Copy artist - song name"
+    )
+    val webActionOptions = listOf(
+        "spotiflac" to "Open SpotiFLAC",
+        "spotify"   to "Open Spotify"
     )
     val songsPerPageOptions = listOf(5 to "5 songs", 10 to "10 songs", Int.MAX_VALUE to "All songs")
 
@@ -408,6 +414,38 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 copyFormat = value
                                 prefs.edit().putString("copy_format", value).apply()
                                 copyDropdownExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            // When I tap a song NOT in my music library
+            Text(
+                "When I tap a song NOT in my music library:",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { webActionExpanded = true },
+                    shape = MaterialTheme.shapes.extraLarge,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(webActionOptions.first { it.first == webAction }.second)
+                }
+                DropdownMenu(
+                    expanded = webActionExpanded,
+                    onDismissRequest = { webActionExpanded = false }
+                ) {
+                    webActionOptions.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                webAction = value
+                                prefs.edit().putString("web_action", value).apply()
+                                webActionExpanded = false
                             }
                         )
                     }
@@ -569,22 +607,17 @@ fun SettingsScreen(onBack: () -> Unit) {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 private fun handleSuggestionTap(context: Context, s: SuggestionUiItem, copyFormat: String) {
-    val prefs = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
-    val fmt   = prefs.getString("copy_format", "song_only") ?: "song_only"
-
     if (s.isLocal) {
-        val text = if (fmt == "artist_song") "${s.artist} - ${s.track}" else s.track
-        val cb   = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val prefs = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+        val fmt   = prefs.getString("copy_format", "song_only") ?: "song_only"
+        val text  = if (fmt == "artist_song") "${s.artist} - ${s.track}" else s.track
+        val cb    = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
         cb.setPrimaryClip(android.content.ClipData.newPlainText("DJ Friend", text))
         android.widget.Toast.makeText(context, "Copied: $text", android.widget.Toast.LENGTH_SHORT).show()
     } else {
-        // Copy "Track by Artist" then open Spotify search
-        val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        cb.setPrimaryClip(android.content.ClipData.newPlainText("DJ Friend", "${s.track} by ${s.artist}"))
-        val query = Uri.encode("${s.track} ${s.artist}")
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse("https://open.spotify.com/search/$query"))
-                .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        // Delegate to shared resolver — handles iTunes → Odesli → Spotify URL + web_action pref
+        com.djfriend.app.receiver.NotificationActionReceiver.handleWebSuggestionTap(
+            context, s.artist, s.track
         )
     }
 }
