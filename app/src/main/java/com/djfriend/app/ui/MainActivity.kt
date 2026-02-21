@@ -111,26 +111,13 @@ fun MainScreen(onSettings: () -> Unit) {
         onDispose { context.unregisterReceiver(receiver) }
     }
 
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                isRunning = isServiceRunning()
-                // Ask service to re-broadcast current state when we come back to foreground
-                if (isRunning) requestPage(nowPlaying.pageOffset)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
     val prefs      = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
     val copyFormat = prefs.getString("copy_format", "song_only") ?: "song_only"
 
     // Helper to send a page request using the current songs_per_page setting
     fun requestPage(offset: Int) {
         val pageSize = prefs.getInt("songs_per_page", 10).let {
-            if (it == Int.MAX_VALUE) 1000 else it  // "All songs" sends a very large page size
+            if (it == Int.MAX_VALUE) 1000 else it
         }
         context.sendBroadcast(
             Intent(DjFriendService.ACTION_REQUEST_PAGE)
@@ -138,6 +125,18 @@ fun MainScreen(onSettings: () -> Unit) {
                 .putExtra(DjFriendService.EXTRA_PAGE_OFFSET, offset)
                 .putExtra("extra_page_size", pageSize)
         )
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isRunning = isServiceRunning()
+                if (isRunning) requestPage(nowPlaying.pageOffset)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Surface(modifier = Modifier.fillMaxSize()) {
