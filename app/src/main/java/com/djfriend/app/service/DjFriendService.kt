@@ -192,38 +192,39 @@ class DjFriendService : Service() {
                 return@launch
             }
 
-            val suggestions  = mutableListOf<SuggestionResult>()
-            val usedArtists  = mutableSetOf(artist.lowercase())
+            val prefs          = getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+            val maxSuggestions = prefs.getInt("max_suggestions", 5).coerceIn(1, 10)
 
-            // Primary: track.getSimilar
-            // First 3 slots: any match qualifies
-            // Slots 4-5: only include if match score >= MIN_MATCH_SCORE (0.8)
+            val suggestions = mutableListOf<SuggestionResult>()
+            val usedArtists = mutableSetOf(artist.lowercase())
+
+            // Primary: track.getSimilar — one per artist, score threshold for slots 4+
             val similarTracks = runCatching {
-                lastFmApi.getSimilarTracks(artist, track, 20, apiKey)
+                lastFmApi.getSimilarTracks(artist, track, 30, apiKey)
             }.getOrNull()?.similarTracks?.tracks ?: emptyList()
 
             similarTracks
                 .filter { it.artist.name.lowercase() !in usedArtists }
                 .forEach { t ->
-                    if (suggestions.size >= 5) return@forEach
+                    if (suggestions.size >= maxSuggestions) return@forEach
                     val artistLower = t.artist.name.lowercase()
                     if (artistLower in usedArtists) return@forEach
-                    // For slots 4+, require high confidence score
                     val score = t.match ?: 0f
+                    // Slots 4+ require high confidence
                     if (suggestions.size >= 3 && score < MIN_MATCH_SCORE) return@forEach
                     suggestions += resolveSuggestion(t.artist.name, t.name)
                     usedArtists += artistLower
                 }
 
-            // Fallback A: artist.getSimilar -> top track each (fills up to 3 only)
-            if (suggestions.size < 3) {
+            // Fallback A: artist.getSimilar (fills up to 3 only)
+            if (suggestions.size < minOf(3, maxSuggestions)) {
                 val listeners = trackInfo.track.listeners?.toLongOrNull() ?: Long.MAX_VALUE
                 if (listeners < 10_000 || suggestions.isEmpty()) {
                     runCatching { lastFmApi.getSimilarArtists(artist, 10, apiKey) }
                         .getOrNull()?.similarArtists?.artists
                         ?.filter { it.name.lowercase() !in usedArtists }
                         ?.forEach { simArtist ->
-                            if (suggestions.size >= 3) return@forEach
+                            if (suggestions.size >= minOf(3, maxSuggestions)) return@forEach
                             runCatching {
                                 lastFmApi.getArtistTopTracks(simArtist.name, 1, apiKey)
                             }.getOrNull()?.topTracks?.tracks?.firstOrNull()?.let {
@@ -234,12 +235,12 @@ class DjFriendService : Service() {
                 }
             }
 
-            // Fallback B: current artist's other tracks (last resort, 3 max)
+            // Fallback B: current artist's other tracks (last resort)
             if (suggestions.isEmpty()) {
                 runCatching { lastFmApi.getArtistTopTracks(artist, 5, apiKey) }
                     .getOrNull()?.topTracks?.tracks
                     ?.filter { it.name.lowercase() != track.lowercase() }
-                    ?.take(3)
+                    ?.take(minOf(3, maxSuggestions))
                     ?.forEach { suggestions += resolveSuggestion(artist, it.name) }
             }
 
@@ -334,8 +335,8 @@ class DjFriendService : Service() {
             .build()
 
     private fun updateNotification(statusText: String, suggestions: List<SuggestionResult>) {
-        val prefs       = getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
-        val copyFormat  = prefs.getString("copy_format", "song_only") ?: "song_only"
+        val prefs      = getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+        val copyFormat = prefs.getString("copy_format", "song_only") ?: "song_only"
 
         val bigText = SpannableStringBuilder()
         if (suggestions.isEmpty()) {
@@ -365,16 +366,18 @@ class DjFriendService : Service() {
             .setContentTitle("Now: $currentTrack")
             .setContentText(statusText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
-            .setOngoing(false)   // allows swipe-to-dismiss
+            .setOngoing(false)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            // Delete intent: fires when user swipes the notification away
             .setDeleteIntent(buildStopServicePendingIntent())
 
+        // Use "Suggestion N" for 3 or fewer; just the number for 4+
+        val useNumbers = suggestions.size > 3
         suggestions.forEachIndexed { i, s ->
-            val icon = if (s.isLocal) android.R.drawable.ic_menu_save
-                       else           android.R.drawable.ic_menu_search
-            builder.addAction(icon, "Option ${i + 1}", buildActionPendingIntent(i, s, copyFormat))
+            val label = if (useNumbers) "${i + 1}" else "Suggestion ${i + 1}"
+            val icon  = if (s.isLocal) android.R.drawable.ic_menu_save
+                        else           android.R.drawable.ic_menu_search
+            builder.addAction(icon, label, buildActionPendingIntent(i, s, copyFormat))
         }
 
         notificationManager.notify(NOTIFICATION_ID, builder.build())
