@@ -60,24 +60,17 @@ fun DjFriendScreen() {
         return ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
     }
 
-    fun isSpotifyInstalled(): Boolean = try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.packageManager.getPackageInfo(
-                "com.spotify.music",
-                PackageManager.PackageInfoFlags.of(0)
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            context.packageManager.getPackageInfo("com.spotify.music", 0)
-        }
-        true
-    } catch (e: PackageManager.NameNotFoundException) { false }
+    fun isSpotifyInstalled(): Boolean {
+        return try {
+            context.packageManager.getApplicationInfo("com.spotify.music", 0)
+            true
+        } catch (e: PackageManager.NameNotFoundException) { false }
+    }
 
     fun isServiceRunning(): Boolean =
         context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
             .getBoolean("service_running", false)
 
-    // Opens DJ Friend's own App Info page in Settings
     fun openAppInfo() {
         context.startActivity(
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -87,11 +80,20 @@ fun DjFriendScreen() {
         )
     }
 
+    val prefs = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+
     var isRunning          by remember { mutableStateOf(isServiceRunning()) }
     var hasListenerAccess  by remember { mutableStateOf(hasNotificationListenerAccess()) }
     var hasNotifPermission by remember { mutableStateOf(hasPostNotificationPermission()) }
     var hasMusicAccess     by remember { mutableStateOf(hasMusicPermission()) }
     var spotifyInstalled   by remember { mutableStateOf(isSpotifyInstalled()) }
+    var copyFormat         by remember { mutableStateOf(prefs.getString("copy_format", "song_only") ?: "song_only") }
+    var copyDropdownExpanded by remember { mutableStateOf(false) }
+
+    val copyFormatOptions = listOf(
+        "song_only"   to "Copy song name",
+        "artist_song" to "Copy artist - song name"
+    )
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -122,18 +124,11 @@ fun DjFriendScreen() {
 
     val notifPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        hasNotifPermission = granted
-        // If denied, send to App Info so user can enable it manually
-        if (!granted) openAppInfo()
-    }
+    ) { granted -> hasNotifPermission = granted; if (!granted) openAppInfo() }
 
     val musicPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        hasMusicAccess = granted
-        if (!granted) openAppInfo()
-    }
+    ) { granted -> hasMusicAccess = granted; if (!granted) openAppInfo() }
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -167,15 +162,11 @@ fun DjFriendScreen() {
                     containerColor = if (isRunning) MaterialTheme.colorScheme.error
                                      else          MaterialTheme.colorScheme.primary
                 )
-            ) {
-                Text(if (isRunning) "Stop DJ Friend" else "Start DJ Friend")
-            }
+            ) { Text(if (isRunning) "Stop DJ Friend" else "Start DJ Friend") }
 
-            // Notification Listener (special system setting — always opens Settings)
+            // Notification Listener
             OutlinedButton(
-                onClick = {
-                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                },
+                onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
                 shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -187,7 +178,7 @@ fun DjFriendScreen() {
                 )
             }
 
-            // POST_NOTIFICATIONS (Android 13+) — opens App Info if already decided
+            // POST_NOTIFICATIONS (Android 13+)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 OutlinedButton(
                     onClick = {
@@ -198,24 +189,21 @@ fun DjFriendScreen() {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        if (hasNotifPermission) "Notifications Allowed"
-                        else                   "Allow Notifications",
+                        if (hasNotifPermission) "Notifications Allowed" else "Allow Notifications",
                         color = if (hasNotifPermission) MaterialTheme.colorScheme.tertiary
                                 else                   MaterialTheme.colorScheme.primary
                     )
                 }
             }
 
-            // Music library access — opens App Info if already granted
+            // Music access
             OutlinedButton(
                 onClick = {
-                    if (hasMusicAccess) {
-                        openAppInfo()
-                    } else {
+                    if (hasMusicAccess) openAppInfo()
+                    else {
                         val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                             Manifest.permission.READ_MEDIA_AUDIO
-                        else
-                            Manifest.permission.READ_EXTERNAL_STORAGE
+                        else Manifest.permission.READ_EXTERNAL_STORAGE
                         musicPermLauncher.launch(perm)
                     }
                 },
@@ -263,11 +251,43 @@ fun DjFriendScreen() {
                 },
                 shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Disable Battery Optimisation")
+            ) { Text("Disable Battery Optimisation") }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // Copy format setting
+            Text(
+                "When tapping a local match:",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { copyDropdownExpanded = true },
+                    shape = MaterialTheme.shapes.extraLarge,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(copyFormatOptions.first { it.first == copyFormat }.second)
+                }
+                DropdownMenu(
+                    expanded = copyDropdownExpanded,
+                    onDismissRequest = { copyDropdownExpanded = false }
+                ) {
+                    copyFormatOptions.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                copyFormat = value
+                                prefs.edit().putString("copy_format", value).apply()
+                                copyDropdownExpanded = false
+                            }
+                        )
+                    }
+                }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(4.dp))
             Text(
                 "DJ Friend monitors your media playback and suggests what to play next via Last.fm.",
                 style = MaterialTheme.typography.bodySmall,
