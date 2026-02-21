@@ -1,8 +1,10 @@
 package com.djfriend.app.service
 
 import android.app.*
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
@@ -11,6 +13,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.MediaStore
+import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationCompat
 import com.djfriend.app.model.SuggestionResult
 import com.djfriend.app.api.RetrofitClient
@@ -54,6 +57,9 @@ class DjFriendService : Service() {
     private var timeoutRunnable: Runnable? = null
     private var timeoutDurationMs = TIMEOUT_OPTIONS["3 min"]!!
 
+    // Tracks which controllers we have already registered callbacks on
+    private val registeredControllers = mutableSetOf<MediaController>()
+
     private val mediaControllerCallback = object : MediaController.Callback() {
         override fun onMetadataChanged(metadata: MediaMetadata?) {
             metadata ?: return
@@ -74,6 +80,15 @@ class DjFriendService : Service() {
         }
     }
 
+    // Receives rescan broadcasts from MediaSessionListenerService
+    private val rescanReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == MediaSessionListenerService.ACTION_RESCAN) {
+                observeMediaSessions()
+            }
+        }
+    }
+
     // Lifecycle
 
     override fun onCreate() {
@@ -82,6 +97,12 @@ class DjFriendService : Service() {
         mediaSessionManager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
         createNotificationChannel()
         loadPreferences()
+
+        // Register for rescan signals from MediaSessionListenerService
+        val filter = IntentFilter(MediaSessionListenerService.ACTION_RESCAN)
+        ContextCompat.registerReceiver(
+            this, rescanReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -93,19 +114,39 @@ class DjFriendService : Service() {
     override fun onDestroy() {
         cancelTimeout()
         serviceScope.cancel()
+        unregisterReceiver(rescanReceiver)
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // Media Session
+    // Media Session — registers callbacks on ALL active sessions, not just the first
 
     private fun observeMediaSessions() {
         try {
             val sessions = mediaSessionManager.getActiveSessions(
                 android.content.ComponentName(this, MediaSessionListenerService::class.java)
             )
-            sessions.firstOrNull()?.registerCallback(mediaControllerCallback, mainHandler)
+            sessions.forEach { controller ->
+                if (!registeredControllers.contains(controller)) {
+                    controller.registerCallback(mediaControllerCallback, mainHandler)
+                    registeredControllers.add(controller)
+
+                    // Immediately check if something is already playing
+                    controller.metadata?.let { meta ->
+                        val artist   = meta.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: return@let
+                        val track    = meta.getString(MediaMetadata.METADATA_KEY_TITLE)  ?: return@let
+                        val duration = meta.getLong(MediaMetadata.METADATA_KEY_DURATION)
+                        if (isMusicContent(track, duration) && (artist != currentArtist || track != currentTrack)) {
+                            currentArtist = artist
+                            currentTrack  = track
+                            fetchSuggestions(artist, track)
+                        }
+                    }
+                }
+            }
+            // Clean up controllers that are no longer active
+            registeredControllers.retainAll(sessions.toSet())
         } catch (e: SecurityException) {
             updateNotification("Grant Notification Access in Settings", emptyList())
         }
@@ -126,7 +167,7 @@ class DjFriendService : Service() {
             updateNotification("Finding suggestions...", emptyList())
 
             val trackInfo = runCatching {
-                lastFmApi.getTrackInfo(artist = artist, track = track)
+                lastFmApi.getTrackInfo(artist = artist, track = track, apiKey = RetrofitClient.apiKey)
             }.getOrNull()
 
             if (trackInfo?.track == null) {
@@ -137,7 +178,7 @@ class DjFriendService : Service() {
             val suggestions = mutableListOf<SuggestionResult>()
 
             // Primary: track.getSimilar
-            runCatching { lastFmApi.getSimilarTracks(artist, track, 5) }
+            runCatching { lastFmApi.getSimilarTracks(artist, track, 5, RetrofitClient.apiKey) }
                 .getOrNull()?.similarTracks?.tracks
                 ?.take(3)
                 ?.forEach { suggestions += resolveSuggestion(it.artist.name, it.name) }
@@ -146,12 +187,12 @@ class DjFriendService : Service() {
             if (suggestions.size < 3) {
                 val listeners = trackInfo.track.listeners?.toLongOrNull() ?: Long.MAX_VALUE
                 if (listeners < 10_000 || suggestions.isEmpty()) {
-                    runCatching { lastFmApi.getSimilarArtists(artist, 5) }
+                    runCatching { lastFmApi.getSimilarArtists(artist, 5, RetrofitClient.apiKey) }
                         .getOrNull()?.similarArtists?.artists
                         ?.filter { it.name.lowercase() != artist.lowercase() }
                         ?.take(3 - suggestions.size)
                         ?.forEach { simArtist ->
-                            runCatching { lastFmApi.getArtistTopTracks(simArtist.name, 1) }
+                            runCatching { lastFmApi.getArtistTopTracks(simArtist.name, 1, RetrofitClient.apiKey) }
                                 .getOrNull()?.topTracks?.tracks?.firstOrNull()
                                 ?.let { suggestions += resolveSuggestion(simArtist.name, it.name) }
                         }
@@ -160,7 +201,7 @@ class DjFriendService : Service() {
 
             // Fallback B: current artist top tracks
             if (suggestions.isEmpty()) {
-                runCatching { lastFmApi.getArtistTopTracks(artist, 5) }
+                runCatching { lastFmApi.getArtistTopTracks(artist, 5, RetrofitClient.apiKey) }
                     .getOrNull()?.topTracks?.tracks
                     ?.filter { it.name.lowercase() != track.lowercase() }
                     ?.take(3)
