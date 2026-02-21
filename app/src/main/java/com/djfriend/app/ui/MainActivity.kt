@@ -2,8 +2,6 @@ package com.djfriend.app.ui
 
 import android.Manifest
 import android.app.ActivityManager
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -22,16 +20,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.djfriend.app.service.DjFriendService
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            MaterialTheme {
-                DjFriendScreen()
-            }
-        }
+        setContent { MaterialTheme { DjFriendScreen() } }
     }
 }
 
@@ -39,15 +36,13 @@ class MainActivity : ComponentActivity() {
 fun DjFriendScreen() {
     val context = LocalContext.current
 
-    // Check if service is running
     fun isServiceRunning(): Boolean {
-        val manager = context.getSystemService(ActivityManager::class.java)
         @Suppress("DEPRECATION")
-        return manager.getRunningServices(Int.MAX_VALUE)
+        return (context.getSystemService(ActivityManager::class.java))
+            .getRunningServices(Int.MAX_VALUE)
             .any { it.service.className == DjFriendService::class.java.name }
     }
 
-    // Check notification listener access
     fun hasNotificationAccess(): Boolean {
         val flat = Settings.Secure.getString(
             context.contentResolver, "enabled_notification_listeners"
@@ -55,7 +50,6 @@ fun DjFriendScreen() {
         return flat.contains(context.packageName)
     }
 
-    // Check music/audio permission
     fun hasMusicPermission(): Boolean {
         val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
             Manifest.permission.READ_MEDIA_AUDIO
@@ -64,15 +58,14 @@ fun DjFriendScreen() {
         return ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
     }
 
-    var isRunning        by remember { mutableStateOf(isServiceRunning()) }
-    var hasNotifAccess   by remember { mutableStateOf(hasNotificationAccess()) }
-    var hasMusicAccess   by remember { mutableStateOf(hasMusicPermission()) }
+    var isRunning      by remember { mutableStateOf(isServiceRunning()) }
+    var hasNotifAccess by remember { mutableStateOf(hasNotificationAccess()) }
+    var hasMusicAccess by remember { mutableStateOf(hasMusicPermission()) }
 
-    // Re-check states when activity resumes (e.g. after returning from Settings)
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
                 isRunning      = isServiceRunning()
                 hasNotifAccess = hasNotificationAccess()
                 hasMusicAccess = hasMusicPermission()
@@ -88,9 +81,7 @@ fun DjFriendScreen() {
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier
-                .padding(24.dp)
-                .fillMaxWidth(),
+            modifier = Modifier.padding(24.dp).fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -103,7 +94,7 @@ fun DjFriendScreen() {
             )
             Spacer(Modifier.height(12.dp))
 
-            // Start / Stop
+            // Start / Stop — turns red while running
             Button(
                 onClick = {
                     if (isRunning) {
@@ -117,55 +108,52 @@ fun DjFriendScreen() {
                 shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isRunning)
-                        MaterialTheme.colorScheme.error
-                    else
-                        MaterialTheme.colorScheme.primary
+                    containerColor = if (isRunning) MaterialTheme.colorScheme.error
+                                     else          MaterialTheme.colorScheme.primary
                 )
             ) {
                 Text(if (isRunning) "Stop DJ Friend" else "Start DJ Friend")
             }
 
-            // Notification access
+            // Notification access — changes text when granted
             OutlinedButton(
                 onClick = {
                     context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                 },
                 shape = MaterialTheme.shapes.extraLarge,
-                modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedButtonDefaults.outlinedButtonColors(
-                    contentColor = if (hasNotifAccess)
-                        MaterialTheme.colorScheme.tertiary
-                    else
-                        MaterialTheme.colorScheme.primary
-                )
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (hasNotifAccess) "Notification Access Granted" else "Grant Notification Access")
+                Text(
+                    if (hasNotifAccess) "Notification Access Granted"
+                    else               "Grant Notification Access",
+                    color = if (hasNotifAccess) MaterialTheme.colorScheme.tertiary
+                            else               MaterialTheme.colorScheme.primary
+                )
             }
 
-            // Music access
+            // Music access — requests permission inline
             OutlinedButton(
                 onClick = {
-                    if (hasMusicAccess) return@OutlinedButton
-                    val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-                        Manifest.permission.READ_MEDIA_AUDIO
-                    else
-                        Manifest.permission.READ_EXTERNAL_STORAGE
-                    musicPermLauncher.launch(perm)
+                    if (!hasMusicAccess) {
+                        val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                            Manifest.permission.READ_MEDIA_AUDIO
+                        else
+                            Manifest.permission.READ_EXTERNAL_STORAGE
+                        musicPermLauncher.launch(perm)
+                    }
                 },
                 shape = MaterialTheme.shapes.extraLarge,
-                modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedButtonDefaults.outlinedButtonColors(
-                    contentColor = if (hasMusicAccess)
-                        MaterialTheme.colorScheme.tertiary
-                    else
-                        MaterialTheme.colorScheme.primary
-                )
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (hasMusicAccess) "Music Access Granted" else "Grant Music Access")
+                Text(
+                    if (hasMusicAccess) "Music Access Granted"
+                    else               "Grant Music Access",
+                    color = if (hasMusicAccess) MaterialTheme.colorScheme.tertiary
+                            else               MaterialTheme.colorScheme.primary
+                )
             }
 
-            // Battery exemption
+            // Battery optimisation
             OutlinedButton(
                 onClick = {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {

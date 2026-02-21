@@ -15,6 +15,7 @@ import android.os.Looper
 import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.text.HtmlCompat
 import com.djfriend.app.model.SuggestionResult
 import com.djfriend.app.api.RetrofitClient
 import com.djfriend.app.receiver.NotificationActionReceiver
@@ -289,15 +290,21 @@ class DjFriendService : Service() {
             .build()
 
     private fun updateNotification(statusText: String, suggestions: List<SuggestionResult>) {
-        // Build the expanded text with numbered options matching the action buttons
-        val bigText = if (suggestions.isEmpty()) "Searching Last.fm..."
-        else buildString {
-            appendLine(statusText)
-            suggestions.take(3).forEachIndexed { i, s ->
-                val source = if (s.isLocal) "[Local]" else "[Web]"
-                appendLine("Option ${i + 1}: ${s.track} by ${s.artist} $source")
-            }
-        }.trimEnd()
+        // Build HTML-formatted expanded text — local matches are bold
+        val bigText = if (suggestions.isEmpty()) {
+            HtmlCompat.fromHtml("Searching Last.fm...", HtmlCompat.FROM_HTML_MODE_LEGACY)
+        } else {
+            val html = buildString {
+                appendLine(statusText)
+                suggestions.take(3).forEachIndexed { i, s ->
+                    val source = if (s.isLocal) "[Local]" else "[Web]"
+                    val line   = "Option ${i + 1}: ${s.track} by ${s.artist} $source"
+                    if (s.isLocal) appendLine("<b>$line</b>")
+                    else           appendLine(line)
+                }
+            }.trimEnd()
+            HtmlCompat.fromHtml(html, HtmlCompat.FROM_HTML_MODE_LEGACY)
+        }
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
