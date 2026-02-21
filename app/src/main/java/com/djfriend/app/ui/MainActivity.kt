@@ -38,14 +38,13 @@ class MainActivity : ComponentActivity() {
 fun DjFriendScreen() {
     val context = LocalContext.current
 
-    fun hasNotificationAccess(): Boolean {
+    fun hasNotificationListenerAccess(): Boolean {
         val flat = Settings.Secure.getString(
             context.contentResolver, "enabled_notification_listeners"
         ) ?: return false
         return flat.contains(context.packageName)
     }
 
-    // POST_NOTIFICATIONS permission (Android 13+) — needed for the notification to appear
     fun hasPostNotificationPermission(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
         return ContextCompat.checkSelfPermission(
@@ -62,7 +61,15 @@ fun DjFriendScreen() {
     }
 
     fun isSpotifyInstalled(): Boolean = try {
-        context.packageManager.getPackageInfo("com.spotify.music", 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getPackageInfo(
+                "com.spotify.music",
+                PackageManager.PackageInfoFlags.of(0)
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo("com.spotify.music", 0)
+        }
         true
     } catch (e: PackageManager.NameNotFoundException) { false }
 
@@ -70,19 +77,28 @@ fun DjFriendScreen() {
         context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
             .getBoolean("service_running", false)
 
+    // Opens DJ Friend's own App Info page in Settings
+    fun openAppInfo() {
+        context.startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:${context.packageName}")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        )
+    }
+
     var isRunning          by remember { mutableStateOf(isServiceRunning()) }
-    var hasNotifAccess     by remember { mutableStateOf(hasNotificationAccess()) }
+    var hasListenerAccess  by remember { mutableStateOf(hasNotificationListenerAccess()) }
     var hasNotifPermission by remember { mutableStateOf(hasPostNotificationPermission()) }
     var hasMusicAccess     by remember { mutableStateOf(hasMusicPermission()) }
     var spotifyInstalled   by remember { mutableStateOf(isSpotifyInstalled()) }
 
-    // Re-check all states when screen comes back into focus
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 isRunning          = isServiceRunning()
-                hasNotifAccess     = hasNotificationAccess()
+                hasListenerAccess  = hasNotificationListenerAccess()
                 hasNotifPermission = hasPostNotificationPermission()
                 hasMusicAccess     = hasMusicPermission()
                 spotifyInstalled   = isSpotifyInstalled()
@@ -92,7 +108,6 @@ fun DjFriendScreen() {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Listen for service stopping (timeout etc.) to update button immediately
     DisposableEffect(Unit) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, i: Intent?) { isRunning = false }
@@ -107,11 +122,18 @@ fun DjFriendScreen() {
 
     val notifPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted -> hasNotifPermission = granted }
+    ) { granted ->
+        hasNotifPermission = granted
+        // If denied, send to App Info so user can enable it manually
+        if (!granted) openAppInfo()
+    }
 
     val musicPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted -> hasMusicAccess = granted }
+    ) { granted ->
+        hasMusicAccess = granted
+        if (!granted) openAppInfo()
+    }
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -149,7 +171,7 @@ fun DjFriendScreen() {
                 Text(if (isRunning) "Stop DJ Friend" else "Start DJ Friend")
             }
 
-            // Notification listener access (special system setting)
+            // Notification Listener (special system setting — always opens Settings)
             OutlinedButton(
                 onClick = {
                     context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
@@ -158,19 +180,19 @@ fun DjFriendScreen() {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    if (hasNotifAccess) "Notification Listener Granted"
-                    else               "Grant Notification Listener Access",
-                    color = if (hasNotifAccess) MaterialTheme.colorScheme.tertiary
-                            else               MaterialTheme.colorScheme.primary
+                    if (hasListenerAccess) "Notification Listener Granted"
+                    else                  "Grant Notification Listener Access",
+                    color = if (hasListenerAccess) MaterialTheme.colorScheme.tertiary
+                            else                  MaterialTheme.colorScheme.primary
                 )
             }
 
-            // POST_NOTIFICATIONS permission (needed for notification to actually show)
+            // POST_NOTIFICATIONS (Android 13+) — opens App Info if already decided
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 OutlinedButton(
                     onClick = {
-                        if (!hasNotifPermission)
-                            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        if (hasNotifPermission) openAppInfo()
+                        else notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     },
                     shape = MaterialTheme.shapes.extraLarge,
                     modifier = Modifier.fillMaxWidth()
@@ -184,10 +206,12 @@ fun DjFriendScreen() {
                 }
             }
 
-            // Music library access
+            // Music library access — opens App Info if already granted
             OutlinedButton(
                 onClick = {
-                    if (!hasMusicAccess) {
+                    if (hasMusicAccess) {
+                        openAppInfo()
+                    } else {
                         val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                             Manifest.permission.READ_MEDIA_AUDIO
                         else
@@ -205,7 +229,7 @@ fun DjFriendScreen() {
                 )
             }
 
-            // Spotify install check
+            // Spotify
             OutlinedButton(
                 onClick = {
                     if (!spotifyInstalled) {
