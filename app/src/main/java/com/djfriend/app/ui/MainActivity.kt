@@ -55,16 +55,22 @@ fun DjFriendScreen() {
     fun hasMusicPermission(): Boolean {
         val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
             Manifest.permission.READ_MEDIA_AUDIO
-        else
-            Manifest.permission.READ_EXTERNAL_STORAGE
+        else Manifest.permission.READ_EXTERNAL_STORAGE
         return ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
     }
 
+    // Use queryIntentActivities to check Spotify — works on all Samsung One UI versions
     fun isSpotifyInstalled(): Boolean {
-        return try {
-            context.packageManager.getApplicationInfo("com.spotify.music", 0)
-            true
-        } catch (e: PackageManager.NameNotFoundException) { false }
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("spotify:"))
+        val activities = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.queryIntentActivities(
+                intent, PackageManager.ResolveInfoFlags.of(0)
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.queryIntentActivities(intent, 0)
+        }
+        return activities.any { it.activityInfo.packageName == "com.spotify.music" }
     }
 
     fun isServiceRunning(): Boolean =
@@ -82,18 +88,21 @@ fun DjFriendScreen() {
 
     val prefs = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
 
-    var isRunning          by remember { mutableStateOf(isServiceRunning()) }
-    var hasListenerAccess  by remember { mutableStateOf(hasNotificationListenerAccess()) }
-    var hasNotifPermission by remember { mutableStateOf(hasPostNotificationPermission()) }
-    var hasMusicAccess     by remember { mutableStateOf(hasMusicPermission()) }
-    var spotifyInstalled   by remember { mutableStateOf(isSpotifyInstalled()) }
-    var copyFormat         by remember { mutableStateOf(prefs.getString("copy_format", "song_only") ?: "song_only") }
+    var isRunning            by remember { mutableStateOf(isServiceRunning()) }
+    var hasListenerAccess    by remember { mutableStateOf(hasNotificationListenerAccess()) }
+    var hasNotifPermission   by remember { mutableStateOf(hasPostNotificationPermission()) }
+    var hasMusicAccess       by remember { mutableStateOf(hasMusicPermission()) }
+    var spotifyInstalled     by remember { mutableStateOf(isSpotifyInstalled()) }
+    var copyFormat           by remember { mutableStateOf(prefs.getString("copy_format", "song_only") ?: "song_only") }
+    var maxSuggestions       by remember { mutableStateOf(prefs.getInt("max_suggestions", 5)) }
     var copyDropdownExpanded by remember { mutableStateOf(false) }
+    var countDropdownExpanded by remember { mutableStateOf(false) }
 
     val copyFormatOptions = listOf(
         "song_only"   to "Copy song name",
         "artist_song" to "Copy artist - song name"
     )
+    val suggestionCountOptions = (1..10).map { it to "$it song${if (it == 1) "" else "s"}" }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -132,7 +141,9 @@ fun DjFriendScreen() {
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.padding(24.dp).fillMaxWidth(),
+            modifier = Modifier
+                .padding(24.dp)
+                .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -143,9 +154,9 @@ fun DjFriendScreen() {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(4.dp))
 
-            // Start / Stop
+            // ── Start / Stop ──────────────────────────────────────────────
             Button(
                 onClick = {
                     if (isRunning) {
@@ -164,19 +175,73 @@ fun DjFriendScreen() {
                 )
             ) { Text(if (isRunning) "Stop DJ Friend" else "Start DJ Friend") }
 
-            // Notification Listener
-            OutlinedButton(
-                onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
-                shape = MaterialTheme.shapes.extraLarge,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    if (hasListenerAccess) "Notification Listener Granted"
-                    else                  "Grant Notification Listener Access",
-                    color = if (hasListenerAccess) MaterialTheme.colorScheme.tertiary
-                            else                  MaterialTheme.colorScheme.primary
-                )
+            // ── Number of Suggestions ─────────────────────────────────────
+            Text(
+                "Number of Suggestions:",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { countDropdownExpanded = true },
+                    shape = MaterialTheme.shapes.extraLarge,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(suggestionCountOptions.first { it.first == maxSuggestions }.second)
+                }
+                DropdownMenu(
+                    expanded = countDropdownExpanded,
+                    onDismissRequest = { countDropdownExpanded = false }
+                ) {
+                    suggestionCountOptions.forEach { (count, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                maxSuggestions = count
+                                prefs.edit().putInt("max_suggestions", count).apply()
+                                countDropdownExpanded = false
+                            }
+                        )
+                    }
+                }
             }
+
+            // ── Copy format ───────────────────────────────────────────────
+            Text(
+                "When I tap a song in my music library:",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { copyDropdownExpanded = true },
+                    shape = MaterialTheme.shapes.extraLarge,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(copyFormatOptions.first { it.first == copyFormat }.second)
+                }
+                DropdownMenu(
+                    expanded = copyDropdownExpanded,
+                    onDismissRequest = { copyDropdownExpanded = false }
+                ) {
+                    copyFormatOptions.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                copyFormat = value
+                                prefs.edit().putString("copy_format", value).apply()
+                                copyDropdownExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // ── Permissions & setup ───────────────────────────────────────
 
             // POST_NOTIFICATIONS (Android 13+)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -217,24 +282,17 @@ fun DjFriendScreen() {
                 )
             }
 
-            // Spotify
+            // Notification Listener
             OutlinedButton(
-                onClick = {
-                    if (!spotifyInstalled) {
-                        context.startActivity(
-                            Intent(Intent.ACTION_VIEW,
-                                Uri.parse("https://play.google.com/store/apps/details?id=com.spotify.music")
-                            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                        )
-                    }
-                },
+                onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
                 shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    if (spotifyInstalled) "Spotify Installed" else "Install Spotify",
-                    color = if (spotifyInstalled) MaterialTheme.colorScheme.tertiary
-                            else                 MaterialTheme.colorScheme.primary
+                    if (hasListenerAccess) "Notification Listener Granted"
+                    else                  "Grant Notification Listener Access",
+                    color = if (hasListenerAccess) MaterialTheme.colorScheme.tertiary
+                            else                  MaterialTheme.colorScheme.primary
                 )
             }
 
@@ -253,38 +311,26 @@ fun DjFriendScreen() {
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Disable Battery Optimisation") }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-            // Copy format setting
-            Text(
-                "When tapping a local match:",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.Start)
-            )
-            Box(modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = { copyDropdownExpanded = true },
-                    shape = MaterialTheme.shapes.extraLarge,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(copyFormatOptions.first { it.first == copyFormat }.second)
-                }
-                DropdownMenu(
-                    expanded = copyDropdownExpanded,
-                    onDismissRequest = { copyDropdownExpanded = false }
-                ) {
-                    copyFormatOptions.forEach { (value, label) ->
-                        DropdownMenuItem(
-                            text = { Text(label) },
-                            onClick = {
-                                copyFormat = value
-                                prefs.edit().putString("copy_format", value).apply()
-                                copyDropdownExpanded = false
-                            }
+            // Spotify
+            OutlinedButton(
+                onClick = {
+                    if (!spotifyInstalled) {
+                        context.startActivity(
+                            Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse("https://play.google.com/store/apps/details?id=com.spotify.music")
+                            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
                         )
                     }
-                }
+                },
+                shape = MaterialTheme.shapes.extraLarge,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (spotifyInstalled) "Spotify Installed" else "Install Spotify",
+                    color = if (spotifyInstalled) MaterialTheme.colorScheme.tertiary
+                            else                 MaterialTheme.colorScheme.primary
+                )
             }
 
             Spacer(Modifier.height(4.dp))

@@ -27,30 +27,26 @@ jobs:
         run: |
           echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 --decode > $GITHUB_WORKSPACE/keystore.jks
 
-      # 4. Inject the Last.fm API key into local.properties so build.gradle can read it
-      - name: Inject Last.fm API Key
-        run: |
-          echo "LASTFM_API_KEY=${{ secrets.LASTFM_API_KEY }}" >> local.properties
-
-      # 5. Make Gradle wrapper executable
+      # 4. Make Gradle wrapper executable
       - name: Grant Gradle execute permission
         run: chmod +x gradlew
 
-      # 6. Cache Gradle downloads to speed up future runs
+      # 5. Cache Gradle downloads to speed up future runs
       - name: Cache Gradle packages
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-v2-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          key: gradle-v3-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: |
-            gradle-v2-
+            gradle-v3-
 
-      # 7. Build and sign the release APK
+      # 6. Build and sign the release APK
       - name: Build signed release APK
         run: |
           ./gradlew assembleRelease \
+            -PLASTFM_API_KEY="${{ secrets.LASTFM_API_KEY }}" \
             -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/keystore.jks \
             -Pandroid.injected.signing.store.password=${{ secrets.SIGNING_STORE_PASSWORD }} \
             -Pandroid.injected.signing.key.alias=${{ secrets.SIGNING_KEY_ALIAS }} \
