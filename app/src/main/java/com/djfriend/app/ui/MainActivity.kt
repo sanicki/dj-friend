@@ -276,17 +276,15 @@ fun DjFriendScreen() {
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Disable Battery Optimisation") }
 
-            // Spotify
+            // Spotify — always opens Play Store; shows installed state as info only
             OutlinedButton(
                 onClick = {
-                    if (!spotifyInstalled) {
-                        context.startActivity(
-                            Intent(
-                                Intent.ACTION_VIEW,
-                                Uri.parse("https://play.google.com/store/apps/details?id=com.spotify.music")
-                            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                        )
-                    }
+                    context.startActivity(
+                        Intent(
+                            Intent.ACTION_VIEW,
+                            Uri.parse("https://play.google.com/store/apps/details?id=com.spotify.music")
+                        ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                    )
                 },
                 shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier.fillMaxWidth()
