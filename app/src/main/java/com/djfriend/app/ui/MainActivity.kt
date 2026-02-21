@@ -308,6 +308,11 @@ fun SettingsScreen(onBack: () -> Unit) {
         return activities.any { it.activityInfo.packageName == "com.spotify.music" }
     }
 
+    fun isSpotiflacInstalled(): Boolean = try {
+        context.packageManager.getApplicationInfo("com.spotiflac.android", 0)
+        true
+    } catch (e: PackageManager.NameNotFoundException) { false }
+
     fun openAppInfo() = context.startActivity(
         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
             data = Uri.parse("package:${context.packageName}")
@@ -321,6 +326,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var hasNotifPermission by remember { mutableStateOf(hasPostNotificationPermission()) }
     var hasMusicAccess     by remember { mutableStateOf(hasMusicPermission()) }
     var spotifyInstalled   by remember { mutableStateOf(isSpotifyInstalled()) }
+    var spotiflacInstalled by remember { mutableStateOf(isSpotiflacInstalled()) }
     var copyFormat         by remember { mutableStateOf(prefs.getString("copy_format", "song_only") ?: "song_only") }
     var copyDropdownExpanded by remember { mutableStateOf(false) }
 
@@ -337,6 +343,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 hasNotifPermission = hasPostNotificationPermission()
                 hasMusicAccess     = hasMusicPermission()
                 spotifyInstalled   = isSpotifyInstalled()
+                spotiflacInstalled = isSpotiflacInstalled()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -464,7 +471,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Disable Battery Optimisation") }
 
-            // Spotify
+            // Spotify — always opens Play Store
             OutlinedButton(
                 onClick = {
                     context.startActivity(
@@ -480,6 +487,25 @@ fun SettingsScreen(onBack: () -> Unit) {
                     if (spotifyInstalled) "Spotify Installed" else "Install Spotify",
                     color = if (spotifyInstalled) MaterialTheme.colorScheme.tertiary
                             else                 MaterialTheme.colorScheme.primary
+                )
+            }
+
+            // SpotiFLAC — always opens GitHub releases page
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW,
+                            Uri.parse("https://github.com/zarzet/SpotiFLAC-Mobile/releases")
+                        ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                    )
+                },
+                shape = MaterialTheme.shapes.extraLarge,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (spotiflacInstalled) "SpotiFLAC Installed" else "Install SpotiFLAC",
+                    color = if (spotiflacInstalled) MaterialTheme.colorScheme.tertiary
+                            else                   MaterialTheme.colorScheme.primary
                 )
             }
 
