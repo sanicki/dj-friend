@@ -1,8 +1,10 @@
 package com.djfriend.app.ui
 
 import android.Manifest
-import android.app.ActivityManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -36,13 +38,6 @@ class MainActivity : ComponentActivity() {
 fun DjFriendScreen() {
     val context = LocalContext.current
 
-    fun isServiceRunning(): Boolean {
-        @Suppress("DEPRECATION")
-        return (context.getSystemService(ActivityManager::class.java))
-            .getRunningServices(Int.MAX_VALUE)
-            .any { it.service.className == DjFriendService::class.java.name }
-    }
-
     fun hasNotificationAccess(): Boolean {
         val flat = Settings.Secure.getString(
             context.contentResolver, "enabled_notification_listeners"
@@ -58,10 +53,16 @@ fun DjFriendScreen() {
         return ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
     }
 
+    // Service state tracked via SharedPreferences written by the service itself
+    fun isServiceRunning(): Boolean =
+        context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+            .getBoolean("service_running", false)
+
     var isRunning      by remember { mutableStateOf(isServiceRunning()) }
     var hasNotifAccess by remember { mutableStateOf(hasNotificationAccess()) }
     var hasMusicAccess by remember { mutableStateOf(hasMusicPermission()) }
 
+    // Re-check on resume (e.g. returning from Settings)
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -73,6 +74,21 @@ fun DjFriendScreen() {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Also listen for service-stopped broadcast so button updates immediately on timeout
+    DisposableEffect(Unit) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, i: Intent?) {
+                isRunning = false
+            }
+        }
+        ContextCompat.registerReceiver(
+            context, receiver,
+            IntentFilter(DjFriendService.ACTION_SERVICE_STOPPED),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        onDispose { context.unregisterReceiver(receiver) }
     }
 
     val musicPermLauncher = rememberLauncherForActivityResult(
@@ -94,7 +110,6 @@ fun DjFriendScreen() {
             )
             Spacer(Modifier.height(12.dp))
 
-            // Start / Stop — turns red while running
             Button(
                 onClick = {
                     if (isRunning) {
@@ -115,7 +130,6 @@ fun DjFriendScreen() {
                 Text(if (isRunning) "Stop DJ Friend" else "Start DJ Friend")
             }
 
-            // Notification access — changes text when granted
             OutlinedButton(
                 onClick = {
                     context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
@@ -124,14 +138,12 @@ fun DjFriendScreen() {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    if (hasNotifAccess) "Notification Access Granted"
-                    else               "Grant Notification Access",
+                    if (hasNotifAccess) "Notification Access Granted" else "Grant Notification Access",
                     color = if (hasNotifAccess) MaterialTheme.colorScheme.tertiary
                             else               MaterialTheme.colorScheme.primary
                 )
             }
 
-            // Music access — requests permission inline
             OutlinedButton(
                 onClick = {
                     if (!hasMusicAccess) {
@@ -146,14 +158,12 @@ fun DjFriendScreen() {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    if (hasMusicAccess) "Music Access Granted"
-                    else               "Grant Music Access",
+                    if (hasMusicAccess) "Music Access Granted" else "Grant Music Access",
                     color = if (hasMusicAccess) MaterialTheme.colorScheme.tertiary
                             else               MaterialTheme.colorScheme.primary
                 )
             }
 
-            // Battery optimisation
             OutlinedButton(
                 onClick = {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {

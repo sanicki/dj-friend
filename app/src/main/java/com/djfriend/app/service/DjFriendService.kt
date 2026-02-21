@@ -33,6 +33,8 @@ class DjFriendService : Service() {
         const val EXTRA_ARTIST = "extra_artist"
         const val EXTRA_TRACK = "extra_track"
 
+        const val ACTION_SERVICE_STOPPED = "com.djfriend.ACTION_SERVICE_STOPPED"
+
         val TIMEOUT_OPTIONS = mapOf(
             "1 min"  to 60_000L,
             "3 min"  to 180_000L,
@@ -103,6 +105,8 @@ class DjFriendService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("service_running", true).apply()
         startForeground(NOTIFICATION_ID, buildBaseNotification("Listening for music..."))
         observeMediaSessions()
         return START_STICKY
@@ -112,6 +116,9 @@ class DjFriendService : Service() {
         cancelTimeout()
         serviceScope.cancel()
         unregisterReceiver(rescanReceiver)
+        getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("service_running", false).apply()
+        sendBroadcast(Intent(ACTION_SERVICE_STOPPED).setPackage(packageName))
         super.onDestroy()
     }
 
