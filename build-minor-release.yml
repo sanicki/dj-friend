@@ -1,0 +1,78 @@
+name: Build & Sign APK for Minor Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate next minor version
+        id: version
+        run: |
+          LATEST=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
+            | sort -t. -k1,1V -k2,2n -k3,3n | tail -1)
+          if [ -z "$LATEST" ]; then LATEST="v0.0.0"; fi
+          MAJOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f1)
+          MINOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f2)
+          NEXT_MINOR=$((MINOR + 1))
+          NEW_TAG="v${MAJOR}.${NEXT_MINOR}.0"
+          echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          echo "Next minor version: $NEW_TAG"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 --decode > $GITHUB_WORKSPACE/keystore.jks
+
+      - name: Grant Gradle execute permission
+        run: chmod +x gradlew
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-v3-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-v3-
+
+      - name: Build signed APK
+        run: |
+          ./gradlew assembleRelease \
+            -PLASTFM_API_KEY="${{ secrets.LASTFM_API_KEY }}" \
+            -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/keystore.jks \
+            -Pandroid.injected.signing.store.password=${{ secrets.SIGNING_STORE_PASSWORD }} \
+            -Pandroid.injected.signing.key.alias=${{ secrets.SIGNING_KEY_ALIAS }} \
+            -Pandroid.injected.signing.key.password=${{ secrets.SIGNING_KEY_PASSWORD }}
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: djfriend-${{ steps.version.outputs.tag }}-apk
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 90
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "DJ Friend ${{ steps.version.outputs.tag }}"
+          body: "Minor release built by GitHub Actions."
+          files: app/build/outputs/apk/release/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
