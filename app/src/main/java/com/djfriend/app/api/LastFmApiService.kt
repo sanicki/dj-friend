@@ -84,6 +84,6 @@ data class ArtistTopTracksResponse(
 )
 data class TopTracksList(@SerializedName("track") val tracks: List<TrackRef>)
 
-data class TrackRef(val name: String, val artist: ArtistRef)
+data class TrackRef(val name: String, val artist: ArtistRef, val match: Float? = null)
 
 data class ArtistRef(val name: String)

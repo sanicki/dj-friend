@@ -30,12 +30,15 @@ class DjFriendService : Service() {
     companion object {
         const val CHANNEL_ID = "djfriend_channel"
         const val NOTIFICATION_ID = 1001
-        const val ACTION_PLAY_LOCAL = "com.djfriend.ACTION_PLAY_LOCAL"
+        const val ACTION_PLAY_LOCAL   = "com.djfriend.ACTION_PLAY_LOCAL"
         const val ACTION_OPEN_SPOTIFY = "com.djfriend.ACTION_OPEN_SPOTIFY"
         const val ACTION_SERVICE_STOPPED = "com.djfriend.ACTION_SERVICE_STOPPED"
         const val EXTRA_MEDIA_URI = "extra_media_uri"
-        const val EXTRA_ARTIST = "extra_artist"
-        const val EXTRA_TRACK = "extra_track"
+        const val EXTRA_ARTIST    = "extra_artist"
+        const val EXTRA_TRACK     = "extra_track"
+
+        // Minimum similarity score for options 4 and 5
+        private const val MIN_MATCH_SCORE = 0.8f
 
         val TIMEOUT_OPTIONS = mapOf(
             "1 min"  to 60_000L,
@@ -49,17 +52,21 @@ class DjFriendService : Service() {
             RegexOption.IGNORE_CASE
         )
         private const val MAX_DURATION_MS = 10 * 60 * 1000L
+
+        // Unicode symbols
+        private const val CHECK = "\u2714"   // ✔ heavy check mark
+        private const val CROSS = "\u274C"   // ❌ cross mark (U+274C is the emoji cross)
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private val lastFmApi = RetrofitClient.lastFmApi
-    private val apiKey = RetrofitClient.apiKey
+    private val mainHandler   = Handler(Looper.getMainLooper())
+    private val lastFmApi     = RetrofitClient.lastFmApi
+    private val apiKey        = RetrofitClient.apiKey
     private lateinit var notificationManager: NotificationManager
     private lateinit var mediaSessionManager: MediaSessionManager
 
     private var currentArtist = ""
-    private var currentTrack = ""
+    private var currentTrack  = ""
     private var timeoutRunnable: Runnable? = null
     private var timeoutDurationMs = TIMEOUT_OPTIONS["3 min"]!!
     private val registeredControllers = mutableSetOf<MediaController>()
@@ -71,7 +78,8 @@ class DjFriendService : Service() {
             val track    = metadata.getString(MediaMetadata.METADATA_KEY_TITLE)  ?: return
             val duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)
             cancelTimeout()
-            if (isMusicContent(track, duration) && (artist != currentArtist || track != currentTrack)) {
+            if (isMusicContent(track, duration) &&
+                (artist != currentArtist || track != currentTrack)) {
                 currentArtist = artist
                 currentTrack  = track
                 fetchSuggestions(artist, track)
@@ -86,9 +94,7 @@ class DjFriendService : Service() {
 
     private val rescanReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == MediaSessionListenerService.ACTION_RESCAN) {
-                observeMediaSessions()
-            }
+            if (intent?.action == MediaSessionListenerService.ACTION_RESCAN) observeMediaSessions()
         }
     }
 
@@ -100,9 +106,10 @@ class DjFriendService : Service() {
         mediaSessionManager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
         createNotificationChannel()
         loadPreferences()
-        val filter = IntentFilter(MediaSessionListenerService.ACTION_RESCAN)
         ContextCompat.registerReceiver(
-            this, rescanReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED
+            this, rescanReceiver,
+            IntentFilter(MediaSessionListenerService.ACTION_RESCAN),
+            ContextCompat.RECEIVER_NOT_EXPORTED
         )
     }
 
@@ -126,6 +133,12 @@ class DjFriendService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // Called when user swipes the notification away
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
     // Media Session
 
     private fun observeMediaSessions() {
@@ -141,7 +154,8 @@ class DjFriendService : Service() {
                         val artist   = meta.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: return@let
                         val track    = meta.getString(MediaMetadata.METADATA_KEY_TITLE)  ?: return@let
                         val duration = meta.getLong(MediaMetadata.METADATA_KEY_DURATION)
-                        if (isMusicContent(track, duration) && (artist != currentArtist || track != currentTrack)) {
+                        if (isMusicContent(track, duration) &&
+                            (artist != currentArtist || track != currentTrack)) {
                             currentArtist = artist
                             currentTrack  = track
                             fetchSuggestions(artist, track)
@@ -164,12 +178,6 @@ class DjFriendService : Service() {
     }
 
     // Recommendation Engine
-    // Rules:
-    // 1. Never suggest the current artist
-    // 2. Never suggest the same artist twice in the results
-    // 3. Primary: track.getSimilar (filtered for artist diversity)
-    // 4. Fallback A: artist.getSimilar -> top track for each (already diverse by definition)
-    // 5. Fallback B: only if both above fail entirely
 
     private fun fetchSuggestions(artist: String, track: String) {
         serviceScope.launch {
@@ -184,23 +192,30 @@ class DjFriendService : Service() {
                 return@launch
             }
 
-            val suggestions = mutableListOf<SuggestionResult>()
-            val usedArtists = mutableSetOf(artist.lowercase()) // never suggest current artist
+            val suggestions  = mutableListOf<SuggestionResult>()
+            val usedArtists  = mutableSetOf(artist.lowercase())
 
-            // Primary: track.getSimilar — enforce one-per-artist
-            runCatching { lastFmApi.getSimilarTracks(artist, track, 20, apiKey) }
-                .getOrNull()?.similarTracks?.tracks
-                ?.filter { it.artist.name.lowercase() !in usedArtists }
-                ?.forEach { t ->
-                    if (suggestions.size >= 3) return@forEach
+            // Primary: track.getSimilar
+            // First 3 slots: any match qualifies
+            // Slots 4-5: only include if match score >= MIN_MATCH_SCORE (0.8)
+            val similarTracks = runCatching {
+                lastFmApi.getSimilarTracks(artist, track, 20, apiKey)
+            }.getOrNull()?.similarTracks?.tracks ?: emptyList()
+
+            similarTracks
+                .filter { it.artist.name.lowercase() !in usedArtists }
+                .forEach { t ->
+                    if (suggestions.size >= 5) return@forEach
                     val artistLower = t.artist.name.lowercase()
-                    if (artistLower !in usedArtists) {
-                        suggestions += resolveSuggestion(t.artist.name, t.name)
-                        usedArtists += artistLower
-                    }
+                    if (artistLower in usedArtists) return@forEach
+                    // For slots 4+, require high confidence score
+                    val score = t.match ?: 0f
+                    if (suggestions.size >= 3 && score < MIN_MATCH_SCORE) return@forEach
+                    suggestions += resolveSuggestion(t.artist.name, t.name)
+                    usedArtists += artistLower
                 }
 
-            // Fallback A: artist.getSimilar -> each artist's top track (inherently diverse)
+            // Fallback A: artist.getSimilar -> top track each (fills up to 3 only)
             if (suggestions.size < 3) {
                 val listeners = trackInfo.track.listeners?.toLongOrNull() ?: Long.MAX_VALUE
                 if (listeners < 10_000 || suggestions.isEmpty()) {
@@ -209,17 +224,17 @@ class DjFriendService : Service() {
                         ?.filter { it.name.lowercase() !in usedArtists }
                         ?.forEach { simArtist ->
                             if (suggestions.size >= 3) return@forEach
-                            runCatching { lastFmApi.getArtistTopTracks(simArtist.name, 1, apiKey) }
-                                .getOrNull()?.topTracks?.tracks?.firstOrNull()
-                                ?.let {
-                                    suggestions += resolveSuggestion(simArtist.name, it.name)
-                                    usedArtists += simArtist.name.lowercase()
-                                }
+                            runCatching {
+                                lastFmApi.getArtistTopTracks(simArtist.name, 1, apiKey)
+                            }.getOrNull()?.topTracks?.tracks?.firstOrNull()?.let {
+                                suggestions += resolveSuggestion(simArtist.name, it.name)
+                                usedArtists += simArtist.name.lowercase()
+                            }
                         }
                 }
             }
 
-            // Fallback B: only if we have nothing at all — use current artist's other tracks
+            // Fallback B: current artist's other tracks (last resort, 3 max)
             if (suggestions.isEmpty()) {
                 runCatching { lastFmApi.getArtistTopTracks(artist, 5, apiKey) }
                     .getOrNull()?.topTracks?.tracks
@@ -319,17 +334,18 @@ class DjFriendService : Service() {
             .build()
 
     private fun updateNotification(statusText: String, suggestions: List<SuggestionResult>) {
-        // Build SpannableStringBuilder for rich text in BigTextStyle
-        // Each option on its own line; local matches are bold
+        val prefs       = getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+        val copyFormat  = prefs.getString("copy_format", "song_only") ?: "song_only"
+
         val bigText = SpannableStringBuilder()
         if (suggestions.isEmpty()) {
             bigText.append("Searching Last.fm...")
         } else {
             bigText.append(statusText)
             bigText.append("\n")
-            suggestions.take(3).forEachIndexed { i, s ->
-                val source = if (s.isLocal) " [Local]" else " [Web]"
-                val line   = "Option ${i + 1}: ${s.track} by ${s.artist}$source\n"
+            suggestions.forEachIndexed { i, s ->
+                val symbol = if (s.isLocal) CHECK else CROSS
+                val line   = "${i + 1}. ${s.track} by ${s.artist} $symbol\n"
                 if (s.isLocal) {
                     val start = bigText.length
                     bigText.append(line)
@@ -349,24 +365,41 @@ class DjFriendService : Service() {
             .setContentTitle("Now: $currentTrack")
             .setContentText(statusText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
-            .setOngoing(true)
+            .setOngoing(false)   // allows swipe-to-dismiss
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            // Delete intent: fires when user swipes the notification away
+            .setDeleteIntent(buildStopServicePendingIntent())
 
-        suggestions.take(3).forEachIndexed { i, s ->
-            val icon  = if (s.isLocal) android.R.drawable.ic_menu_save
-                        else           android.R.drawable.ic_menu_search
-            builder.addAction(icon, "Option ${i + 1}", buildActionPendingIntent(i, s))
+        suggestions.forEachIndexed { i, s ->
+            val icon = if (s.isLocal) android.R.drawable.ic_menu_save
+                       else           android.R.drawable.ic_menu_search
+            builder.addAction(icon, "Option ${i + 1}", buildActionPendingIntent(i, s, copyFormat))
         }
 
         notificationManager.notify(NOTIFICATION_ID, builder.build())
     }
 
-    private fun buildActionPendingIntent(index: Int, s: SuggestionResult): PendingIntent {
+    private fun buildStopServicePendingIntent(): PendingIntent {
+        val intent = Intent(this, NotificationActionReceiver::class.java).apply {
+            action = NotificationActionReceiver.ACTION_STOP_SERVICE
+        }
+        return PendingIntent.getBroadcast(
+            this, 999, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun buildActionPendingIntent(
+        index: Int,
+        s: SuggestionResult,
+        copyFormat: String
+    ): PendingIntent {
         val intent = Intent(this, NotificationActionReceiver::class.java).apply {
             action = if (s.isLocal) ACTION_PLAY_LOCAL else ACTION_OPEN_SPOTIFY
             putExtra(EXTRA_ARTIST, s.artist)
             putExtra(EXTRA_TRACK, s.track)
+            putExtra(NotificationActionReceiver.EXTRA_COPY_FORMAT, copyFormat)
             s.localUri?.let { putExtra(EXTRA_MEDIA_URI, it.toString()) }
         }
         return PendingIntent.getBroadcast(

@@ -10,29 +10,39 @@ import android.widget.Toast
 import com.djfriend.app.service.DjFriendService
 
 class NotificationActionReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        val artist = intent.getStringExtra(DjFriendService.EXTRA_ARTIST) ?: return
-        val track  = intent.getStringExtra(DjFriendService.EXTRA_TRACK)  ?: return
 
+    companion object {
+        const val ACTION_STOP_SERVICE  = "com.djfriend.ACTION_STOP_SERVICE"
+        const val EXTRA_COPY_FORMAT    = "extra_copy_format"
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
 
-            // Local match: copy "Track by Artist" to clipboard
-            DjFriendService.ACTION_PLAY_LOCAL -> {
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val label = "$track by $artist"
-                clipboard.setPrimaryClip(ClipData.newPlainText("DJ Friend suggestion", label))
-                Toast.makeText(context, "Copied: $label", Toast.LENGTH_SHORT).show()
+            // Fired when user swipes the notification away
+            ACTION_STOP_SERVICE -> {
+                context.stopService(Intent(context, DjFriendService::class.java))
             }
 
-            // No local match: open Spotify search
+            // Local match: copy to clipboard using chosen format
+            DjFriendService.ACTION_PLAY_LOCAL -> {
+                val artist     = intent.getStringExtra(DjFriendService.EXTRA_ARTIST) ?: return
+                val track      = intent.getStringExtra(DjFriendService.EXTRA_TRACK)  ?: return
+                val copyFormat = intent.getStringExtra(EXTRA_COPY_FORMAT) ?: "song_only"
+                val text       = if (copyFormat == "artist_song") "$artist - $track" else track
+                val clipboard  = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("DJ Friend suggestion", text))
+                Toast.makeText(context, "Copied: $text", Toast.LENGTH_SHORT).show()
+            }
+
+            // Web match: open Spotify search
             DjFriendService.ACTION_OPEN_SPOTIFY -> {
-                // Format: https://open.spotify.com/search/Heaven%20is%20a%20Place%20on%20Earth%20Belinda%20Carlisle
-                val query = Uri.encode("$track $artist")
-                val url   = "https://open.spotify.com/search/$query"
+                val artist = intent.getStringExtra(DjFriendService.EXTRA_ARTIST) ?: return
+                val track  = intent.getStringExtra(DjFriendService.EXTRA_TRACK)  ?: return
+                val query  = Uri.encode("$track $artist")
                 context.startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
+                    Intent(Intent.ACTION_VIEW, Uri.parse("https://open.spotify.com/search/$query"))
+                        .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
                 )
             }
         }
