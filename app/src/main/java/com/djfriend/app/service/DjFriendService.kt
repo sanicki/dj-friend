@@ -13,8 +13,8 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.MediaStore
-import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.djfriend.app.model.SuggestionResult
 import com.djfriend.app.api.RetrofitClient
 import com.djfriend.app.receiver.NotificationActionReceiver
@@ -49,6 +49,7 @@ class DjFriendService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lastFmApi = RetrofitClient.lastFmApi
+    private val apiKey = RetrofitClient.apiKey
     private lateinit var notificationManager: NotificationManager
     private lateinit var mediaSessionManager: MediaSessionManager
 
@@ -56,8 +57,6 @@ class DjFriendService : Service() {
     private var currentTrack = ""
     private var timeoutRunnable: Runnable? = null
     private var timeoutDurationMs = TIMEOUT_OPTIONS["3 min"]!!
-
-    // Tracks which controllers we have already registered callbacks on
     private val registeredControllers = mutableSetOf<MediaController>()
 
     private val mediaControllerCallback = object : MediaController.Callback() {
@@ -80,7 +79,6 @@ class DjFriendService : Service() {
         }
     }
 
-    // Receives rescan broadcasts from MediaSessionListenerService
     private val rescanReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == MediaSessionListenerService.ACTION_RESCAN) {
@@ -97,8 +95,6 @@ class DjFriendService : Service() {
         mediaSessionManager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
         createNotificationChannel()
         loadPreferences()
-
-        // Register for rescan signals from MediaSessionListenerService
         val filter = IntentFilter(MediaSessionListenerService.ACTION_RESCAN)
         ContextCompat.registerReceiver(
             this, rescanReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED
@@ -120,7 +116,7 @@ class DjFriendService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // Media Session — registers callbacks on ALL active sessions, not just the first
+    // Media Session
 
     private fun observeMediaSessions() {
         try {
@@ -131,8 +127,6 @@ class DjFriendService : Service() {
                 if (!registeredControllers.contains(controller)) {
                     controller.registerCallback(mediaControllerCallback, mainHandler)
                     registeredControllers.add(controller)
-
-                    // Immediately check if something is already playing
                     controller.metadata?.let { meta ->
                         val artist   = meta.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: return@let
                         val track    = meta.getString(MediaMetadata.METADATA_KEY_TITLE)  ?: return@let
@@ -145,7 +139,6 @@ class DjFriendService : Service() {
                     }
                 }
             }
-            // Clean up controllers that are no longer active
             registeredControllers.retainAll(sessions.toSet())
         } catch (e: SecurityException) {
             updateNotification("Grant Notification Access in Settings", emptyList())
@@ -167,7 +160,7 @@ class DjFriendService : Service() {
             updateNotification("Finding suggestions...", emptyList())
 
             val trackInfo = runCatching {
-                lastFmApi.getTrackInfo(artist = artist, track = track, apiKey = RetrofitClient.apiKey)
+                lastFmApi.getTrackInfo(artist = artist, track = track, apiKey = apiKey)
             }.getOrNull()
 
             if (trackInfo?.track == null) {
@@ -177,31 +170,28 @@ class DjFriendService : Service() {
 
             val suggestions = mutableListOf<SuggestionResult>()
 
-            // Primary: track.getSimilar
-            runCatching { lastFmApi.getSimilarTracks(artist, track, 5, RetrofitClient.apiKey) }
+            runCatching { lastFmApi.getSimilarTracks(artist, track, 5, apiKey) }
                 .getOrNull()?.similarTracks?.tracks
                 ?.take(3)
                 ?.forEach { suggestions += resolveSuggestion(it.artist.name, it.name) }
 
-            // Fallback A: artist.getSimilar -> each artist's top track
             if (suggestions.size < 3) {
                 val listeners = trackInfo.track.listeners?.toLongOrNull() ?: Long.MAX_VALUE
                 if (listeners < 10_000 || suggestions.isEmpty()) {
-                    runCatching { lastFmApi.getSimilarArtists(artist, 5, RetrofitClient.apiKey) }
+                    runCatching { lastFmApi.getSimilarArtists(artist, 5, apiKey) }
                         .getOrNull()?.similarArtists?.artists
                         ?.filter { it.name.lowercase() != artist.lowercase() }
                         ?.take(3 - suggestions.size)
                         ?.forEach { simArtist ->
-                            runCatching { lastFmApi.getArtistTopTracks(simArtist.name, 1, RetrofitClient.apiKey) }
+                            runCatching { lastFmApi.getArtistTopTracks(simArtist.name, 1, apiKey) }
                                 .getOrNull()?.topTracks?.tracks?.firstOrNull()
                                 ?.let { suggestions += resolveSuggestion(simArtist.name, it.name) }
                         }
                 }
             }
 
-            // Fallback B: current artist top tracks
             if (suggestions.isEmpty()) {
-                runCatching { lastFmApi.getArtistTopTracks(artist, 5, RetrofitClient.apiKey) }
+                runCatching { lastFmApi.getArtistTopTracks(artist, 5, apiKey) }
                     .getOrNull()?.topTracks?.tracks
                     ?.filter { it.name.lowercase() != track.lowercase() }
                     ?.take(3)
@@ -299,10 +289,15 @@ class DjFriendService : Service() {
             .build()
 
     private fun updateNotification(statusText: String, suggestions: List<SuggestionResult>) {
+        // Build the expanded text with numbered options matching the action buttons
         val bigText = if (suggestions.isEmpty()) "Searching Last.fm..."
-        else suggestions.take(3).joinToString("\n") {
-            "${if (it.isLocal) "[Local]" else "[Web]"}  ${it.track} by ${it.artist}"
-        }
+        else buildString {
+            appendLine(statusText)
+            suggestions.take(3).forEachIndexed { i, s ->
+                val source = if (s.isLocal) "[Local]" else "[Web]"
+                appendLine("Option ${i + 1}: ${s.track} by ${s.artist} $source")
+            }
+        }.trimEnd()
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
@@ -313,11 +308,13 @@ class DjFriendService : Service() {
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
+        // Action buttons labelled "Option 1", "Option 2", "Option 3"
         suggestions.take(3).forEachIndexed { i, s ->
-            val icon  = if (s.isLocal) android.R.drawable.ic_menu_save
-                        else           android.R.drawable.ic_menu_search
-            val label = "${if (s.isLocal) "[Local]" else "[Web]"} ${s.track} - ${s.artist}"
-            builder.addAction(icon, label, buildActionPendingIntent(i, s))
+            builder.addAction(
+                android.R.drawable.ic_media_play,
+                "Option ${i + 1}",
+                buildActionPendingIntent(i, s)
+            )
         }
 
         notificationManager.notify(NOTIFICATION_ID, builder.build())
@@ -325,6 +322,7 @@ class DjFriendService : Service() {
 
     private fun buildActionPendingIntent(index: Int, s: SuggestionResult): PendingIntent {
         val intent = Intent(this, NotificationActionReceiver::class.java).apply {
+            // Local match: copy track name to clipboard instead of interrupting playback
             action = if (s.isLocal) ACTION_PLAY_LOCAL else ACTION_OPEN_SPOTIFY
             putExtra(EXTRA_ARTIST, s.artist)
             putExtra(EXTRA_TRACK, s.track)
