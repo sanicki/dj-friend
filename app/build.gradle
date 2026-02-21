@@ -4,13 +4,6 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
-// Read local.properties for the Last.fm key
-def localProps = new Properties()
-def localPropsFile = rootProject.file("local.properties")
-if (localPropsFile.exists()) {
-    localPropsFile.withReader('UTF-8') { reader -> localProps.load(reader) }
-}
-
 android {
     namespace 'com.djfriend.app'
     compileSdk 35
@@ -22,9 +15,10 @@ android {
         versionCode 1
         versionName "1.0.0"
 
-        // Inject the Last.fm API key at compile time
-        buildConfigField "String", "LASTFM_API_KEY",
-                "\"${localProps.getProperty('LASTFM_API_KEY', '')}\""
+        // API key: passed as -PLASTFM_API_KEY=xxx on the Gradle command line (CI),
+        // or defined in local.properties for local dev builds.
+        def apiKey = findProperty('LASTFM_API_KEY') ?: localPropsValue('LASTFM_API_KEY')
+        buildConfigField "String", "LASTFM_API_KEY", "\"${apiKey}\""
     }
 
     buildFeatures {
@@ -82,4 +76,13 @@ dependencies {
 
     // Material Components (needed for XML theme)
     implementation "com.google.android.material:material:1.12.0"
+}
+
+// Helper: read a value from local.properties (for local dev builds)
+def localPropsValue(String key) {
+    def propsFile = rootProject.file("local.properties")
+    if (!propsFile.exists()) return ""
+    def props = new Properties()
+    propsFile.withReader('UTF-8') { props.load(it) }
+    return props.getProperty(key, "")
 }
