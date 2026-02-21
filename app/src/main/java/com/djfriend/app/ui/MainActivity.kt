@@ -15,27 +15,264 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.djfriend.app.service.DjFriendService
+import org.json.JSONObject
+
+// ─── Data class for UI state broadcast from service ───────────────────────────
+data class NowPlayingState(
+    val currentArtist:  String  = "",
+    val currentTrack:   String  = "",
+    val currentPackage: String  = "",
+    val pageOffset:     Int     = 0,
+    val canGoBack:      Boolean = false,
+    val canGoMore:      Boolean = false,
+    val suggestions:    List<SuggestionUiItem> = emptyList()
+)
+
+data class SuggestionUiItem(
+    val globalIndex: Int,
+    val artist:      String,
+    val track:       String,
+    val isLocal:     Boolean,
+    val localUri:    String
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { DjFriendScreen() } }
+        setContent { MaterialTheme { DjFriendApp() } }
     }
 }
 
 @Composable
-fun DjFriendScreen() {
+fun DjFriendApp() {
+    var showSettings by remember { mutableStateOf(false) }
+    if (showSettings) {
+        SettingsScreen(onBack = { showSettings = false })
+    } else {
+        MainScreen(onSettings = { showSettings = true })
+    }
+}
+
+// ─── Main / Now Playing Screen ────────────────────────────────────────────────
+
+@Composable
+fun MainScreen(onSettings: () -> Unit) {
+    val context = LocalContext.current
+
+    fun isServiceRunning() =
+        context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+            .getBoolean("service_running", false)
+
+    var isRunning     by remember { mutableStateOf(isServiceRunning()) }
+    var nowPlaying    by remember { mutableStateOf(NowPlayingState()) }
+
+    // Listen for state broadcasts from the service
+    DisposableEffect(Unit) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    DjFriendService.ACTION_STATE_UPDATE -> {
+                        val json = intent.getStringExtra(DjFriendService.EXTRA_STATE_JSON) ?: return
+                        nowPlaying = parseStateJson(json)
+                    }
+                    DjFriendService.ACTION_SERVICE_STOPPED -> {
+                        isRunning  = false
+                        nowPlaying = NowPlayingState()
+                    }
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(DjFriendService.ACTION_STATE_UPDATE)
+            addAction(DjFriendService.ACTION_SERVICE_STOPPED)
+        }
+        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        onDispose { context.unregisterReceiver(receiver) }
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isRunning = isServiceRunning()
+                // Ask service to re-broadcast current state when we come back to foreground
+                if (isRunning) {
+                    context.sendBroadcast(
+                        Intent(DjFriendService.ACTION_REQUEST_PAGE)
+                            .setPackage(context.packageName)
+                            .putExtra(DjFriendService.EXTRA_PAGE_OFFSET, nowPlaying.pageOffset)
+                    )
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val prefs      = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+    val copyFormat = prefs.getString("copy_format", "song_only") ?: "song_only"
+
+    Surface(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState())
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(Modifier.height(16.dp))
+            Text("DJ Friend", style = MaterialTheme.typography.headlineLarge)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Start / Stop
+                Button(
+                    onClick = {
+                        if (isRunning) {
+                            context.stopService(Intent(context, DjFriendService::class.java))
+                            isRunning  = false
+                            nowPlaying = NowPlayingState()
+                        } else {
+                            context.startForegroundService(Intent(context, DjFriendService::class.java))
+                            isRunning = true
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isRunning) MaterialTheme.colorScheme.error
+                                         else          MaterialTheme.colorScheme.primary
+                    )
+                ) { Text(if (isRunning) "Stop" else "Start") }
+
+                // Settings
+                OutlinedButton(
+                    onClick = onSettings,
+                    modifier = Modifier.weight(1f),
+                    shape = MaterialTheme.shapes.extraLarge
+                ) { Text("Settings") }
+            }
+
+            // Now Playing button — opens the active media player app
+            if (nowPlaying.currentTrack.isNotEmpty()) {
+                Button(
+                    onClick = {
+                        val launchIntent = context.packageManager
+                            .getLaunchIntentForPackage(nowPlaying.currentPackage)
+                        if (launchIntent != null) context.startActivity(launchIntent)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor   = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                ) {
+                    Text(
+                        "Now Playing: ${nowPlaying.currentTrack} by ${nowPlaying.currentArtist}",
+                        maxLines = 2
+                    )
+                }
+            } else if (isRunning) {
+                Button(
+                    onClick = {},
+                    enabled = false,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.extraLarge
+                ) { Text("Listening for music...") }
+            }
+
+            // Suggestion buttons — up to 10 per page
+            if (nowPlaying.suggestions.isNotEmpty()) {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Text(
+                    "Suggested for you:",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.Start)
+                )
+
+                nowPlaying.suggestions.forEach { s ->
+                    val symbol = if (s.isLocal) DjFriendService.CHECK else DjFriendService.CROSS
+                    val label  = "${s.globalIndex + 1}. ${s.track} by ${s.artist} $symbol"
+                    OutlinedButton(
+                        onClick = { handleSuggestionTap(context, s, copyFormat) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.extraLarge
+                    ) {
+                        Text(
+                            label,
+                            fontWeight = if (s.isLocal) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 2
+                        )
+                    }
+                }
+
+                // Back / More navigation row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            val newOffset = (nowPlaying.pageOffset - DjFriendService.PAGE_SIZE)
+                                .coerceAtLeast(0)
+                            context.sendBroadcast(
+                                Intent(DjFriendService.ACTION_REQUEST_PAGE)
+                                    .setPackage(context.packageName)
+                                    .putExtra(DjFriendService.EXTRA_PAGE_OFFSET, newOffset)
+                            )
+                        },
+                        enabled = nowPlaying.canGoBack,
+                        modifier = Modifier.weight(1f),
+                        shape = MaterialTheme.shapes.extraLarge
+                    ) { Text("◀ Back") }
+
+                    if (nowPlaying.canGoMore) {
+                        Button(
+                            onClick = {
+                                val newOffset = nowPlaying.pageOffset + DjFriendService.PAGE_SIZE
+                                context.sendBroadcast(
+                                    Intent(DjFriendService.ACTION_REQUEST_PAGE)
+                                        .setPackage(context.packageName)
+                                        .putExtra(DjFriendService.EXTRA_PAGE_OFFSET, newOffset)
+                                )
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = MaterialTheme.shapes.extraLarge
+                        ) { Text("More ▶") }
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+// ─── Settings Screen ──────────────────────────────────────────────────────────
+
+@Composable
+fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
 
     fun hasNotificationListenerAccess(): Boolean {
@@ -59,13 +296,11 @@ fun DjFriendScreen() {
         return ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
     }
 
-    // Use queryIntentActivities to check Spotify — works on all Samsung One UI versions
     fun isSpotifyInstalled(): Boolean {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("spotify:"))
         val activities = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.packageManager.queryIntentActivities(
-                intent, PackageManager.ResolveInfoFlags.of(0)
-            )
+                intent, PackageManager.ResolveInfoFlags.of(0))
         } else {
             @Suppress("DEPRECATION")
             context.packageManager.queryIntentActivities(intent, 0)
@@ -73,27 +308,20 @@ fun DjFriendScreen() {
         return activities.any { it.activityInfo.packageName == "com.spotify.music" }
     }
 
-    fun isServiceRunning(): Boolean =
-        context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
-            .getBoolean("service_running", false)
-
-    fun openAppInfo() {
-        context.startActivity(
-            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.parse("package:${context.packageName}")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-        )
-    }
+    fun openAppInfo() = context.startActivity(
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.parse("package:${context.packageName}")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    )
 
     val prefs = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
 
-    var isRunning            by remember { mutableStateOf(isServiceRunning()) }
-    var hasListenerAccess    by remember { mutableStateOf(hasNotificationListenerAccess()) }
-    var hasNotifPermission   by remember { mutableStateOf(hasPostNotificationPermission()) }
-    var hasMusicAccess       by remember { mutableStateOf(hasMusicPermission()) }
-    var spotifyInstalled     by remember { mutableStateOf(isSpotifyInstalled()) }
-    var copyFormat           by remember { mutableStateOf(prefs.getString("copy_format", "song_only") ?: "song_only") }
+    var hasListenerAccess  by remember { mutableStateOf(hasNotificationListenerAccess()) }
+    var hasNotifPermission by remember { mutableStateOf(hasPostNotificationPermission()) }
+    var hasMusicAccess     by remember { mutableStateOf(hasMusicPermission()) }
+    var spotifyInstalled   by remember { mutableStateOf(isSpotifyInstalled()) }
+    var copyFormat         by remember { mutableStateOf(prefs.getString("copy_format", "song_only") ?: "song_only") }
     var copyDropdownExpanded by remember { mutableStateOf(false) }
 
     val copyFormatOptions = listOf(
@@ -105,7 +333,6 @@ fun DjFriendScreen() {
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                isRunning          = isServiceRunning()
                 hasListenerAccess  = hasNotificationListenerAccess()
                 hasNotifPermission = hasPostNotificationPermission()
                 hasMusicAccess     = hasMusicPermission()
@@ -114,18 +341,6 @@ fun DjFriendScreen() {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    DisposableEffect(Unit) {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(c: Context?, i: Intent?) { isRunning = false }
-        }
-        ContextCompat.registerReceiver(
-            context, receiver,
-            IntentFilter(DjFriendService.ACTION_SERVICE_STOPPED),
-            ContextCompat.RECEIVER_NOT_EXPORTED
-        )
-        onDispose { context.unregisterReceiver(receiver) }
     }
 
     val notifPermLauncher = rememberLauncherForActivityResult(
@@ -140,39 +355,16 @@ fun DjFriendScreen() {
         Column(
             modifier = Modifier
                 .padding(24.dp)
+                .verticalScroll(rememberScrollState())
                 .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(Modifier.height(24.dp))
-            Text("DJ Friend", style = MaterialTheme.typography.headlineLarge)
-            Text(
-                "Background music discovery",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Spacer(Modifier.height(16.dp))
+            Text("Settings", style = MaterialTheme.typography.headlineLarge)
             Spacer(Modifier.height(4.dp))
 
-            // ── Start / Stop ──────────────────────────────────────────────
-            Button(
-                onClick = {
-                    if (isRunning) {
-                        context.stopService(Intent(context, DjFriendService::class.java))
-                        isRunning = false
-                    } else {
-                        context.startForegroundService(Intent(context, DjFriendService::class.java))
-                        isRunning = true
-                    }
-                },
-                shape = MaterialTheme.shapes.extraLarge,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isRunning) MaterialTheme.colorScheme.error
-                                     else          MaterialTheme.colorScheme.primary
-                )
-            ) { Text(if (isRunning) "Stop DJ Friend" else "Start DJ Friend") }
-
-            // ── Copy format ───────────────────────────────────────────────
+            // Copy format
             Text(
                 "When I tap a song in my music library:",
                 style = MaterialTheme.typography.labelMedium,
@@ -184,9 +376,7 @@ fun DjFriendScreen() {
                     onClick = { copyDropdownExpanded = true },
                     shape = MaterialTheme.shapes.extraLarge,
                     modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(copyFormatOptions.first { it.first == copyFormat }.second)
-                }
+                ) { Text(copyFormatOptions.first { it.first == copyFormat }.second) }
                 DropdownMenu(
                     expanded = copyDropdownExpanded,
                     onDismissRequest = { copyDropdownExpanded = false }
@@ -206,9 +396,7 @@ fun DjFriendScreen() {
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
-            // ── Permissions & setup ───────────────────────────────────────
-
-            // POST_NOTIFICATIONS (Android 13+)
+            // Allow Notifications
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 OutlinedButton(
                     onClick = {
@@ -261,7 +449,7 @@ fun DjFriendScreen() {
                 )
             }
 
-            // Battery optimisation
+            // Battery
             OutlinedButton(
                 onClick = {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -276,12 +464,11 @@ fun DjFriendScreen() {
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Disable Battery Optimisation") }
 
-            // Spotify — always opens Play Store; shows installed state as info only
+            // Spotify
             OutlinedButton(
                 onClick = {
                     context.startActivity(
-                        Intent(
-                            Intent.ACTION_VIEW,
+                        Intent(Intent.ACTION_VIEW,
                             Uri.parse("https://play.google.com/store/apps/details?id=com.spotify.music")
                         ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
                     )
@@ -296,12 +483,64 @@ fun DjFriendScreen() {
                 )
             }
 
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "DJ Friend monitors your media playback and suggests what to play next via Last.fm.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Spacer(Modifier.height(8.dp))
+
+            // Back to main
+            Button(
+                onClick = onBack,
+                shape = MaterialTheme.shapes.extraLarge,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Back to DJ Friend") }
         }
     }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+private fun handleSuggestionTap(context: Context, s: SuggestionUiItem, copyFormat: String) {
+    val prefs = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+    val fmt   = prefs.getString("copy_format", "song_only") ?: "song_only"
+
+    if (s.isLocal) {
+        val text = if (fmt == "artist_song") "${s.artist} - ${s.track}" else s.track
+        val cb   = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cb.setPrimaryClip(android.content.ClipData.newPlainText("DJ Friend", text))
+        android.widget.Toast.makeText(context, "Copied: $text", android.widget.Toast.LENGTH_SHORT).show()
+    } else {
+        // Copy "Track by Artist" then open Spotify search
+        val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cb.setPrimaryClip(android.content.ClipData.newPlainText("DJ Friend", "${s.track} by ${s.artist}"))
+        val query = Uri.encode("${s.track} ${s.artist}")
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://open.spotify.com/search/$query"))
+                .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        )
+    }
+}
+
+private fun parseStateJson(json: String): NowPlayingState {
+    return try {
+        val obj         = JSONObject(json)
+        val suggestions = mutableListOf<SuggestionUiItem>()
+        val arr         = obj.getJSONArray("suggestions")
+        for (i in 0 until arr.length()) {
+            val s = arr.getJSONObject(i)
+            suggestions += SuggestionUiItem(
+                globalIndex = s.getInt("index"),
+                artist      = s.getString("artist"),
+                track       = s.getString("track"),
+                isLocal     = s.getBoolean("isLocal"),
+                localUri    = s.getString("localUri")
+            )
+        }
+        NowPlayingState(
+            currentArtist  = obj.getString("currentArtist"),
+            currentTrack   = obj.getString("currentTrack"),
+            currentPackage = obj.getString("currentPackage"),
+            pageOffset     = obj.getInt("pageOffset"),
+            canGoBack      = obj.getBoolean("canGoBack"),
+            canGoMore      = obj.getBoolean("canGoMore"),
+            suggestions    = suggestions
+        )
+    } catch (e: Exception) { NowPlayingState() }
 }
