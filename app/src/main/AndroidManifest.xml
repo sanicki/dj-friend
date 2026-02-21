@@ -23,7 +23,8 @@
         android:label="@string/app_name"
         android:roundIcon="@android:drawable/ic_media_play"
         android:supportsRtl="true"
-        android:theme="@style/Theme.DjFriend">
+        android:theme="@style/Theme.DjFriend"
+        tools:replace="android:theme">
 
         <activity
             android:name=".ui.MainActivity"
