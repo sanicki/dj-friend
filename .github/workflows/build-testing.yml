@@ -46,6 +46,6 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: djfriend-testing-apk
+          name: djfriend-testing
           path: app/build/outputs/apk/release/*.apk
           retention-days: 30
