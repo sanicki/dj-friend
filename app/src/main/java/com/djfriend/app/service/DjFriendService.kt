@@ -43,7 +43,7 @@ class DjFriendService : Service() {
         const val EXTRA_TRACK            = "extra_track"
         const val EXTRA_STATE_JSON       = "extra_state_json"
         const val EXTRA_PAGE_OFFSET      = "extra_page_offset"
-        const val PAGE_SIZE              = 5   // 5 per page in the app UI
+        const val PAGE_SIZE              = Int.MAX_VALUE   // default "All" — overridden by pref
 
         val TIMEOUT_OPTIONS = mapOf(
             "1 min"  to 60_000L,
@@ -364,7 +364,13 @@ class DjFriendService : Service() {
 
     // ─── State Broadcast ──────────────────────────────────────────────────────
 
-    fun broadcastStateUpdate(pageOffset: Int, pageSize: Int = PAGE_SIZE) {
+    private fun prefPageSize(): Int {
+        val stored = getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+            .getInt("songs_per_page", Int.MAX_VALUE)
+        return if (stored == Int.MAX_VALUE) Int.MAX_VALUE else stored
+    }
+
+    fun broadcastStateUpdate(pageOffset: Int, pageSize: Int = prefPageSize()) {
         val page      = allCandidates.drop(pageOffset).take(pageSize)
         val canGoBack = pageOffset > 0
         val canGoMore = (pageOffset + pageSize) < allCandidates.size
