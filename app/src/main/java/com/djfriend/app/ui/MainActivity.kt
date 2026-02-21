@@ -94,15 +94,12 @@ fun DjFriendScreen() {
     var hasMusicAccess       by remember { mutableStateOf(hasMusicPermission()) }
     var spotifyInstalled     by remember { mutableStateOf(isSpotifyInstalled()) }
     var copyFormat           by remember { mutableStateOf(prefs.getString("copy_format", "song_only") ?: "song_only") }
-    var maxSuggestions       by remember { mutableStateOf(prefs.getInt("max_suggestions", 5)) }
     var copyDropdownExpanded by remember { mutableStateOf(false) }
-    var countDropdownExpanded by remember { mutableStateOf(false) }
 
     val copyFormatOptions = listOf(
         "song_only"   to "Copy song name",
         "artist_song" to "Copy artist - song name"
     )
-    val suggestionCountOptions = (1..10).map { it to "$it song${if (it == 1) "" else "s"}" }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -174,38 +171,6 @@ fun DjFriendScreen() {
                                      else          MaterialTheme.colorScheme.primary
                 )
             ) { Text(if (isRunning) "Stop DJ Friend" else "Start DJ Friend") }
-
-            // ── Number of Suggestions ─────────────────────────────────────
-            Text(
-                "Number of Suggestions:",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.Start)
-            )
-            Box(modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = { countDropdownExpanded = true },
-                    shape = MaterialTheme.shapes.extraLarge,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(suggestionCountOptions.first { it.first == maxSuggestions }.second)
-                }
-                DropdownMenu(
-                    expanded = countDropdownExpanded,
-                    onDismissRequest = { countDropdownExpanded = false }
-                ) {
-                    suggestionCountOptions.forEach { (count, label) ->
-                        DropdownMenuItem(
-                            text = { Text(label) },
-                            onClick = {
-                                maxSuggestions = count
-                                prefs.edit().putInt("max_suggestions", count).apply()
-                                countDropdownExpanded = false
-                            }
-                        )
-                    }
-                }
-            }
 
             // ── Copy format ───────────────────────────────────────────────
             Text(

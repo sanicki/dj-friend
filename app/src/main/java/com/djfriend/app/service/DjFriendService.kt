@@ -55,7 +55,7 @@ class DjFriendService : Service() {
 
         // Unicode symbols
         private const val CHECK = "\u2714"   // ✔ heavy check mark
-        private const val CROSS = "\u274C"   // ❌ cross mark (U+274C is the emoji cross)
+        private const val CROSS = "\u2717"   // ✗ ballot X (plain, not emoji)
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -192,9 +192,6 @@ class DjFriendService : Service() {
                 return@launch
             }
 
-            val prefs          = getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
-            val maxSuggestions = prefs.getInt("max_suggestions", 5).coerceIn(1, 10)
-
             val suggestions = mutableListOf<SuggestionResult>()
             val usedArtists = mutableSetOf(artist.lowercase())
 
@@ -206,25 +203,22 @@ class DjFriendService : Service() {
             similarTracks
                 .filter { it.artist.name.lowercase() !in usedArtists }
                 .forEach { t ->
-                    if (suggestions.size >= maxSuggestions) return@forEach
+                    if (suggestions.size >= 3) return@forEach
                     val artistLower = t.artist.name.lowercase()
                     if (artistLower in usedArtists) return@forEach
-                    val score = t.match ?: 0f
-                    // Slots 4+ require high confidence
-                    if (suggestions.size >= 3 && score < MIN_MATCH_SCORE) return@forEach
                     suggestions += resolveSuggestion(t.artist.name, t.name)
                     usedArtists += artistLower
                 }
 
             // Fallback A: artist.getSimilar (fills up to 3 only)
-            if (suggestions.size < minOf(3, maxSuggestions)) {
+            if (suggestions.size < 3) {
                 val listeners = trackInfo.track.listeners?.toLongOrNull() ?: Long.MAX_VALUE
                 if (listeners < 10_000 || suggestions.isEmpty()) {
                     runCatching { lastFmApi.getSimilarArtists(artist, 10, apiKey) }
                         .getOrNull()?.similarArtists?.artists
                         ?.filter { it.name.lowercase() !in usedArtists }
                         ?.forEach { simArtist ->
-                            if (suggestions.size >= minOf(3, maxSuggestions)) return@forEach
+                            if (suggestions.size >= 3) return@forEach
                             runCatching {
                                 lastFmApi.getArtistTopTracks(simArtist.name, 1, apiKey)
                             }.getOrNull()?.topTracks?.tracks?.firstOrNull()?.let {
@@ -240,12 +234,12 @@ class DjFriendService : Service() {
                 runCatching { lastFmApi.getArtistTopTracks(artist, 5, apiKey) }
                     .getOrNull()?.topTracks?.tracks
                     ?.filter { it.name.lowercase() != track.lowercase() }
-                    ?.take(minOf(3, maxSuggestions))
+                    ?.take(3)
                     ?.forEach { suggestions += resolveSuggestion(artist, it.name) }
             }
 
             withContext(Dispatchers.Main) {
-                updateNotification("Up next for you:", suggestions)
+                updateNotification("Suggested for you:", suggestions)
             }
         }
     }
@@ -371,13 +365,12 @@ class DjFriendService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setDeleteIntent(buildStopServicePendingIntent())
 
-        // Use "Suggestion N" for 3 or fewer; just the number for 4+
-        val useNumbers = suggestions.size > 3
-        suggestions.forEachIndexed { i, s ->
-            val label = if (useNumbers) "${i + 1}" else "Suggestion ${i + 1}"
-            val icon  = if (s.isLocal) android.R.drawable.ic_menu_save
-                        else           android.R.drawable.ic_menu_search
-            builder.addAction(icon, label, buildActionPendingIntent(i, s, copyFormat))
+        // Max 3 buttons — Android notification hard limit
+        suggestions.forEach { s ->
+            val i    = suggestions.indexOf(s)
+            val icon = if (s.isLocal) android.R.drawable.ic_menu_save
+                       else           android.R.drawable.ic_menu_search
+            builder.addAction(icon, "Suggestion ${i + 1}", buildActionPendingIntent(i, s, copyFormat))
         }
 
         notificationManager.notify(NOTIFICATION_ID, builder.build())
