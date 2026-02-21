@@ -13,9 +13,12 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.MediaStore
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.StyleSpan
+import android.graphics.Typeface
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import androidx.core.text.HtmlCompat
 import com.djfriend.app.model.SuggestionResult
 import com.djfriend.app.api.RetrofitClient
 import com.djfriend.app.receiver.NotificationActionReceiver
@@ -29,11 +32,10 @@ class DjFriendService : Service() {
         const val NOTIFICATION_ID = 1001
         const val ACTION_PLAY_LOCAL = "com.djfriend.ACTION_PLAY_LOCAL"
         const val ACTION_OPEN_SPOTIFY = "com.djfriend.ACTION_OPEN_SPOTIFY"
+        const val ACTION_SERVICE_STOPPED = "com.djfriend.ACTION_SERVICE_STOPPED"
         const val EXTRA_MEDIA_URI = "extra_media_uri"
         const val EXTRA_ARTIST = "extra_artist"
         const val EXTRA_TRACK = "extra_track"
-
-        const val ACTION_SERVICE_STOPPED = "com.djfriend.ACTION_SERVICE_STOPPED"
 
         val TIMEOUT_OPTIONS = mapOf(
             "1 min"  to 60_000L,
@@ -162,6 +164,12 @@ class DjFriendService : Service() {
     }
 
     // Recommendation Engine
+    // Rules:
+    // 1. Never suggest the current artist
+    // 2. Never suggest the same artist twice in the results
+    // 3. Primary: track.getSimilar (filtered for artist diversity)
+    // 4. Fallback A: artist.getSimilar -> top track for each (already diverse by definition)
+    // 5. Fallback B: only if both above fail entirely
 
     private fun fetchSuggestions(artist: String, track: String) {
         serviceScope.launch {
@@ -177,27 +185,41 @@ class DjFriendService : Service() {
             }
 
             val suggestions = mutableListOf<SuggestionResult>()
+            val usedArtists = mutableSetOf(artist.lowercase()) // never suggest current artist
 
-            runCatching { lastFmApi.getSimilarTracks(artist, track, 5, apiKey) }
+            // Primary: track.getSimilar — enforce one-per-artist
+            runCatching { lastFmApi.getSimilarTracks(artist, track, 20, apiKey) }
                 .getOrNull()?.similarTracks?.tracks
-                ?.take(3)
-                ?.forEach { suggestions += resolveSuggestion(it.artist.name, it.name) }
+                ?.filter { it.artist.name.lowercase() !in usedArtists }
+                ?.forEach { t ->
+                    if (suggestions.size >= 3) return@forEach
+                    val artistLower = t.artist.name.lowercase()
+                    if (artistLower !in usedArtists) {
+                        suggestions += resolveSuggestion(t.artist.name, t.name)
+                        usedArtists += artistLower
+                    }
+                }
 
+            // Fallback A: artist.getSimilar -> each artist's top track (inherently diverse)
             if (suggestions.size < 3) {
                 val listeners = trackInfo.track.listeners?.toLongOrNull() ?: Long.MAX_VALUE
                 if (listeners < 10_000 || suggestions.isEmpty()) {
-                    runCatching { lastFmApi.getSimilarArtists(artist, 5, apiKey) }
+                    runCatching { lastFmApi.getSimilarArtists(artist, 10, apiKey) }
                         .getOrNull()?.similarArtists?.artists
-                        ?.filter { it.name.lowercase() != artist.lowercase() }
-                        ?.take(3 - suggestions.size)
+                        ?.filter { it.name.lowercase() !in usedArtists }
                         ?.forEach { simArtist ->
+                            if (suggestions.size >= 3) return@forEach
                             runCatching { lastFmApi.getArtistTopTracks(simArtist.name, 1, apiKey) }
                                 .getOrNull()?.topTracks?.tracks?.firstOrNull()
-                                ?.let { suggestions += resolveSuggestion(simArtist.name, it.name) }
+                                ?.let {
+                                    suggestions += resolveSuggestion(simArtist.name, it.name)
+                                    usedArtists += simArtist.name.lowercase()
+                                }
                         }
                 }
             }
 
+            // Fallback B: only if we have nothing at all — use current artist's other tracks
             if (suggestions.isEmpty()) {
                 runCatching { lastFmApi.getArtistTopTracks(artist, 5, apiKey) }
                     .getOrNull()?.topTracks?.tracks
@@ -297,20 +319,29 @@ class DjFriendService : Service() {
             .build()
 
     private fun updateNotification(statusText: String, suggestions: List<SuggestionResult>) {
-        // Build HTML-formatted expanded text — local matches are bold
-        val bigText = if (suggestions.isEmpty()) {
-            HtmlCompat.fromHtml("Searching Last.fm...", HtmlCompat.FROM_HTML_MODE_LEGACY)
+        // Build SpannableStringBuilder for rich text in BigTextStyle
+        // Each option on its own line; local matches are bold
+        val bigText = SpannableStringBuilder()
+        if (suggestions.isEmpty()) {
+            bigText.append("Searching Last.fm...")
         } else {
-            val html = buildString {
-                appendLine(statusText)
-                suggestions.take(3).forEachIndexed { i, s ->
-                    val source = if (s.isLocal) "[Local]" else "[Web]"
-                    val line   = "Option ${i + 1}: ${s.track} by ${s.artist} $source"
-                    if (s.isLocal) appendLine("<b>$line</b>")
-                    else           appendLine(line)
+            bigText.append(statusText)
+            bigText.append("\n")
+            suggestions.take(3).forEachIndexed { i, s ->
+                val source = if (s.isLocal) " [Local]" else " [Web]"
+                val line   = "Option ${i + 1}: ${s.track} by ${s.artist}$source\n"
+                if (s.isLocal) {
+                    val start = bigText.length
+                    bigText.append(line)
+                    bigText.setSpan(
+                        StyleSpan(Typeface.BOLD),
+                        start, bigText.length,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                } else {
+                    bigText.append(line)
                 }
-            }.trimEnd()
-            HtmlCompat.fromHtml(html, HtmlCompat.FROM_HTML_MODE_LEGACY)
+            }
         }
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -322,13 +353,10 @@ class DjFriendService : Service() {
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
-        // Action buttons labelled "Option 1", "Option 2", "Option 3"
         suggestions.take(3).forEachIndexed { i, s ->
-            builder.addAction(
-                android.R.drawable.ic_media_play,
-                "Option ${i + 1}",
-                buildActionPendingIntent(i, s)
-            )
+            val icon  = if (s.isLocal) android.R.drawable.ic_menu_save
+                        else           android.R.drawable.ic_menu_search
+            builder.addAction(icon, "Option ${i + 1}", buildActionPendingIntent(i, s))
         }
 
         notificationManager.notify(NOTIFICATION_ID, builder.build())
@@ -336,7 +364,6 @@ class DjFriendService : Service() {
 
     private fun buildActionPendingIntent(index: Int, s: SuggestionResult): PendingIntent {
         val intent = Intent(this, NotificationActionReceiver::class.java).apply {
-            // Local match: copy track name to clipboard instead of interrupting playback
             action = if (s.isLocal) ACTION_PLAY_LOCAL else ACTION_OPEN_SPOTIFY
             putExtra(EXTRA_ARTIST, s.artist)
             putExtra(EXTRA_TRACK, s.track)
