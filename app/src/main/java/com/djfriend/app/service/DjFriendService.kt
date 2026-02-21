@@ -87,8 +87,9 @@ class DjFriendService : Service() {
             when (intent?.action) {
                 MediaSessionListenerService.ACTION_RESCAN -> observeMediaSessions()
                 ACTION_REQUEST_PAGE -> {
-                    val offset = intent.getIntExtra(EXTRA_PAGE_OFFSET, 0)
-                    broadcastStateUpdate(offset)
+                    val offset   = intent.getIntExtra(EXTRA_PAGE_OFFSET, 0)
+                    val pageSize = intent.getIntExtra("extra_page_size", PAGE_SIZE)
+                    broadcastStateUpdate(offset, pageSize)
                 }
             }
         }
@@ -363,10 +364,10 @@ class DjFriendService : Service() {
 
     // ─── State Broadcast ──────────────────────────────────────────────────────
 
-    fun broadcastStateUpdate(pageOffset: Int) {
-        val page      = allCandidates.drop(pageOffset).take(PAGE_SIZE)
+    fun broadcastStateUpdate(pageOffset: Int, pageSize: Int = PAGE_SIZE) {
+        val page      = allCandidates.drop(pageOffset).take(pageSize)
         val canGoBack = pageOffset > 0
-        val canGoMore = (pageOffset + PAGE_SIZE) < allCandidates.size
+        val canGoMore = (pageOffset + pageSize) < allCandidates.size
 
         val suggestionsJson = JSONArray().apply {
             page.forEachIndexed { i, s ->
