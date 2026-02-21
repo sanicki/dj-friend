@@ -55,6 +55,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent { MaterialTheme { DjFriendApp() } }
     }
+
+    // Back button/gesture moves the app to the background rather than finishing it,
+    // so the service keeps running unaffected.
+    @Deprecated("Overridden to prevent activity finish")
+    override fun onBackPressed() {
+        moveTaskToBack(true)
+    }
 }
 
 @Composable
@@ -110,13 +117,7 @@ fun MainScreen(onSettings: () -> Unit) {
             if (event == Lifecycle.Event.ON_RESUME) {
                 isRunning = isServiceRunning()
                 // Ask service to re-broadcast current state when we come back to foreground
-                if (isRunning) {
-                    context.sendBroadcast(
-                        Intent(DjFriendService.ACTION_REQUEST_PAGE)
-                            .setPackage(context.packageName)
-                            .putExtra(DjFriendService.EXTRA_PAGE_OFFSET, nowPlaying.pageOffset)
-                    )
-                }
+                if (isRunning) requestPage(nowPlaying.pageOffset)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -125,6 +126,19 @@ fun MainScreen(onSettings: () -> Unit) {
 
     val prefs      = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
     val copyFormat = prefs.getString("copy_format", "song_only") ?: "song_only"
+
+    // Helper to send a page request using the current songs_per_page setting
+    fun requestPage(offset: Int) {
+        val pageSize = prefs.getInt("songs_per_page", 10).let {
+            if (it == Int.MAX_VALUE) 1000 else it  // "All songs" sends a very large page size
+        }
+        context.sendBroadcast(
+            Intent(DjFriendService.ACTION_REQUEST_PAGE)
+                .setPackage(context.packageName)
+                .putExtra(DjFriendService.EXTRA_PAGE_OFFSET, offset)
+                .putExtra("extra_page_size", pageSize)
+        )
+    }
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -234,11 +248,7 @@ fun MainScreen(onSettings: () -> Unit) {
                         onClick = {
                             val newOffset = (nowPlaying.pageOffset - DjFriendService.PAGE_SIZE)
                                 .coerceAtLeast(0)
-                            context.sendBroadcast(
-                                Intent(DjFriendService.ACTION_REQUEST_PAGE)
-                                    .setPackage(context.packageName)
-                                    .putExtra(DjFriendService.EXTRA_PAGE_OFFSET, newOffset)
-                            )
+                            requestPage(newOffset)
                         },
                         enabled = nowPlaying.canGoBack,
                         modifier = Modifier.weight(1f),
@@ -249,11 +259,7 @@ fun MainScreen(onSettings: () -> Unit) {
                         Button(
                             onClick = {
                                 val newOffset = nowPlaying.pageOffset + DjFriendService.PAGE_SIZE
-                                context.sendBroadcast(
-                                    Intent(DjFriendService.ACTION_REQUEST_PAGE)
-                                        .setPackage(context.packageName)
-                                        .putExtra(DjFriendService.EXTRA_PAGE_OFFSET, newOffset)
-                                )
+                                requestPage(newOffset)
                             },
                             modifier = Modifier.weight(1f),
                             shape = MaterialTheme.shapes.extraLarge
@@ -327,13 +333,16 @@ fun SettingsScreen(onBack: () -> Unit) {
     var hasMusicAccess     by remember { mutableStateOf(hasMusicPermission()) }
     var spotifyInstalled   by remember { mutableStateOf(isSpotifyInstalled()) }
     var spotiflacInstalled by remember { mutableStateOf(isSpotiflacInstalled()) }
-    var copyFormat         by remember { mutableStateOf(prefs.getString("copy_format", "song_only") ?: "song_only") }
+    var copyFormat           by remember { mutableStateOf(prefs.getString("copy_format", "song_only") ?: "song_only") }
+    var songsPerPage         by remember { mutableStateOf(prefs.getInt("songs_per_page", 10)) }
     var copyDropdownExpanded by remember { mutableStateOf(false) }
+    var pageDropdownExpanded by remember { mutableStateOf(false) }
 
     val copyFormatOptions = listOf(
         "song_only"   to "Copy song name",
         "artist_song" to "Copy artist - song name"
     )
+    val songsPerPageOptions = listOf(5 to "5 songs", 10 to "10 songs", Int.MAX_VALUE to "All songs")
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -395,6 +404,38 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 copyFormat = value
                                 prefs.edit().putString("copy_format", value).apply()
                                 copyDropdownExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Songs per page
+            Text(
+                "Songs per page:",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { pageDropdownExpanded = true },
+                    shape = MaterialTheme.shapes.extraLarge,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(songsPerPageOptions.first { it.first == songsPerPage }.second)
+                }
+                DropdownMenu(
+                    expanded = pageDropdownExpanded,
+                    onDismissRequest = { pageDropdownExpanded = false }
+                ) {
+                    songsPerPageOptions.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                songsPerPage = value
+                                prefs.edit().putInt("songs_per_page", value).apply()
+                                pageDropdownExpanded = false
                             }
                         )
                     }
