@@ -116,7 +116,7 @@ fun MainScreen(onSettings: () -> Unit) {
 
     // Helper to send a page request using the current songs_per_page setting
     fun requestPage(offset: Int) {
-        val pageSize = prefs.getInt("songs_per_page", 10).let {
+        val pageSize = prefs.getInt("songs_per_page", Int.MAX_VALUE).let {
             if (it == Int.MAX_VALUE) 1000 else it
         }
         context.sendBroadcast(
@@ -238,33 +238,38 @@ fun MainScreen(onSettings: () -> Unit) {
                     }
                 }
 
-                // Back / More navigation row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            val newOffset = (nowPlaying.pageOffset - DjFriendService.PAGE_SIZE)
-                                .coerceAtLeast(0)
-                            requestPage(newOffset)
-                        },
-                        enabled = nowPlaying.canGoBack,
-                        modifier = Modifier.weight(1f),
-                        shape = MaterialTheme.shapes.extraLarge
-                    ) { Text("◀ Back") }
+                // Back / More row — hide Back entirely when showing All songs
+                val showingAll = prefs.getInt("songs_per_page", Int.MAX_VALUE) == Int.MAX_VALUE
+                if (!showingAll || nowPlaying.canGoMore) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (!showingAll) {
+                            OutlinedButton(
+                                onClick = {
+                                    val newOffset = (nowPlaying.pageOffset - DjFriendService.PAGE_SIZE)
+                                        .coerceAtLeast(0)
+                                    requestPage(newOffset)
+                                },
+                                enabled = nowPlaying.canGoBack,
+                                modifier = Modifier.weight(1f),
+                                shape = MaterialTheme.shapes.extraLarge
+                            ) { Text("◀ Back") }
+                        }
 
-                    if (nowPlaying.canGoMore) {
-                        Button(
-                            onClick = {
-                                val newOffset = nowPlaying.pageOffset + DjFriendService.PAGE_SIZE
-                                requestPage(newOffset)
-                            },
-                            modifier = Modifier.weight(1f),
-                            shape = MaterialTheme.shapes.extraLarge
-                        ) { Text("More ▶") }
-                    } else {
-                        Spacer(Modifier.weight(1f))
+                        if (nowPlaying.canGoMore) {
+                            Button(
+                                onClick = {
+                                    val newOffset = nowPlaying.pageOffset + DjFriendService.PAGE_SIZE
+                                    requestPage(newOffset)
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = MaterialTheme.shapes.extraLarge
+                            ) { Text("More ▶") }
+                        } else if (!showingAll) {
+                            Spacer(Modifier.weight(1f))
+                        }
                     }
                 }
             }
@@ -333,7 +338,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var spotifyInstalled   by remember { mutableStateOf(isSpotifyInstalled()) }
     var spotiflacInstalled by remember { mutableStateOf(isSpotiflacInstalled()) }
     var copyFormat           by remember { mutableStateOf(prefs.getString("copy_format", "song_only") ?: "song_only") }
-    var songsPerPage         by remember { mutableStateOf(prefs.getInt("songs_per_page", 10)) }
+    var songsPerPage         by remember { mutableStateOf(prefs.getInt("songs_per_page", Int.MAX_VALUE)) }
     var copyDropdownExpanded by remember { mutableStateOf(false) }
     var pageDropdownExpanded by remember { mutableStateOf(false) }
 
