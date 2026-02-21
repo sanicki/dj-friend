@@ -45,6 +45,14 @@ fun DjFriendScreen() {
         return flat.contains(context.packageName)
     }
 
+    // POST_NOTIFICATIONS permission (Android 13+) — needed for the notification to appear
+    fun hasPostNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+        return ContextCompat.checkSelfPermission(
+            context, Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
     fun hasMusicPermission(): Boolean {
         val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
             Manifest.permission.READ_MEDIA_AUDIO
@@ -53,35 +61,41 @@ fun DjFriendScreen() {
         return ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
     }
 
-    // Service state tracked via SharedPreferences written by the service itself
+    fun isSpotifyInstalled(): Boolean = try {
+        context.packageManager.getPackageInfo("com.spotify.music", 0)
+        true
+    } catch (e: PackageManager.NameNotFoundException) { false }
+
     fun isServiceRunning(): Boolean =
         context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
             .getBoolean("service_running", false)
 
-    var isRunning      by remember { mutableStateOf(isServiceRunning()) }
-    var hasNotifAccess by remember { mutableStateOf(hasNotificationAccess()) }
-    var hasMusicAccess by remember { mutableStateOf(hasMusicPermission()) }
+    var isRunning          by remember { mutableStateOf(isServiceRunning()) }
+    var hasNotifAccess     by remember { mutableStateOf(hasNotificationAccess()) }
+    var hasNotifPermission by remember { mutableStateOf(hasPostNotificationPermission()) }
+    var hasMusicAccess     by remember { mutableStateOf(hasMusicPermission()) }
+    var spotifyInstalled   by remember { mutableStateOf(isSpotifyInstalled()) }
 
-    // Re-check on resume (e.g. returning from Settings)
+    // Re-check all states when screen comes back into focus
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                isRunning      = isServiceRunning()
-                hasNotifAccess = hasNotificationAccess()
-                hasMusicAccess = hasMusicPermission()
+                isRunning          = isServiceRunning()
+                hasNotifAccess     = hasNotificationAccess()
+                hasNotifPermission = hasPostNotificationPermission()
+                hasMusicAccess     = hasMusicPermission()
+                spotifyInstalled   = isSpotifyInstalled()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Also listen for service-stopped broadcast so button updates immediately on timeout
+    // Listen for service stopping (timeout etc.) to update button immediately
     DisposableEffect(Unit) {
         val receiver = object : BroadcastReceiver() {
-            override fun onReceive(c: Context?, i: Intent?) {
-                isRunning = false
-            }
+            override fun onReceive(c: Context?, i: Intent?) { isRunning = false }
         }
         ContextCompat.registerReceiver(
             context, receiver,
@@ -90,6 +104,10 @@ fun DjFriendScreen() {
         )
         onDispose { context.unregisterReceiver(receiver) }
     }
+
+    val notifPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> hasNotifPermission = granted }
 
     val musicPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -110,6 +128,7 @@ fun DjFriendScreen() {
             )
             Spacer(Modifier.height(12.dp))
 
+            // Start / Stop
             Button(
                 onClick = {
                     if (isRunning) {
@@ -130,6 +149,7 @@ fun DjFriendScreen() {
                 Text(if (isRunning) "Stop DJ Friend" else "Start DJ Friend")
             }
 
+            // Notification listener access (special system setting)
             OutlinedButton(
                 onClick = {
                     context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
@@ -138,12 +158,33 @@ fun DjFriendScreen() {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    if (hasNotifAccess) "Notification Access Granted" else "Grant Notification Access",
+                    if (hasNotifAccess) "Notification Listener Granted"
+                    else               "Grant Notification Listener Access",
                     color = if (hasNotifAccess) MaterialTheme.colorScheme.tertiary
                             else               MaterialTheme.colorScheme.primary
                 )
             }
 
+            // POST_NOTIFICATIONS permission (needed for notification to actually show)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                OutlinedButton(
+                    onClick = {
+                        if (!hasNotifPermission)
+                            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    },
+                    shape = MaterialTheme.shapes.extraLarge,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (hasNotifPermission) "Notifications Allowed"
+                        else                   "Allow Notifications",
+                        color = if (hasNotifPermission) MaterialTheme.colorScheme.tertiary
+                                else                   MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            // Music library access
             OutlinedButton(
                 onClick = {
                     if (!hasMusicAccess) {
@@ -164,6 +205,28 @@ fun DjFriendScreen() {
                 )
             }
 
+            // Spotify install check
+            OutlinedButton(
+                onClick = {
+                    if (!spotifyInstalled) {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW,
+                                Uri.parse("https://play.google.com/store/apps/details?id=com.spotify.music")
+                            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                        )
+                    }
+                },
+                shape = MaterialTheme.shapes.extraLarge,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (spotifyInstalled) "Spotify Installed" else "Install Spotify",
+                    color = if (spotifyInstalled) MaterialTheme.colorScheme.tertiary
+                            else                 MaterialTheme.colorScheme.primary
+                )
+            }
+
+            // Battery optimisation
             OutlinedButton(
                 onClick = {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
