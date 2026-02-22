@@ -5,7 +5,7 @@
 
     <queries>
         <package android:name="com.spotify.music" />
-        <package android:name="com.spotiflac.app" /> 
+        <package android:name="com.zarz.spotiflac" /> 
     </queries>
     
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
