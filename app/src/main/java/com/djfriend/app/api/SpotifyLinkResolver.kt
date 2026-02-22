@@ -84,7 +84,7 @@ object SpotifyLinkResolver {
                     .optJSONObject("url")
                     ?.optString("resource")
                     ?: continue
-                if (href.startsWith("open.spotify.com/track/")) return href
+                if (href.startsWith("https://open.spotify.com/track/")) return href
             }
             null
         } catch (e: Exception) { null }
