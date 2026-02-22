@@ -121,8 +121,13 @@ class DjFriendService : Service() {
                     // This app is now playing — promote it as the active player
                     currentPlayerPackage = pkg
                     cancelTimeout()
-                } else {
-                    if (timeoutDurationMs > 0) startTimeout()
+                } else if (state?.state == PlaybackState.STATE_PAUSED ||
+                           state?.state == PlaybackState.STATE_STOPPED ||
+                           state?.state == PlaybackState.STATE_NONE) {
+                    // Only start the timeout if this is the package we consider active
+                    if (pkg == currentPlayerPackage && timeoutDurationMs > 0) {
+                        startTimeout()
+                    }
                 }
             }
         }
@@ -175,6 +180,11 @@ class DjFriendService : Service() {
         cancelTimeout()
         serviceScope.cancel()
         unregisterReceiver(rescanReceiver)
+        // Unregister all controller callbacks to avoid leaks
+        controllerCallbacks.forEach { (controller, callback) ->
+            try { controller.unregisterCallback(callback) } catch (_: Exception) {}
+        }
+        controllerCallbacks.clear()
         getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
             .edit().putBoolean("service_running", false).apply()
         sendBroadcast(Intent(ACTION_SERVICE_STOPPED).setPackage(packageName))
@@ -182,7 +192,10 @@ class DjFriendService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-    override fun onTaskRemoved(rootIntent: Intent?) { stopSelf(); super.onTaskRemoved(rootIntent) }
+
+    // Do NOT stop on task removal — the service should survive the app being swiped away.
+    // Android will restart it (START_STICKY) if the system kills it.
+    // override fun onTaskRemoved(rootIntent: Intent?) { stopSelf(); super.onTaskRemoved(rootIntent) }
 
     // ─── Media Session ────────────────────────────────────────────────────────
 
@@ -222,18 +235,23 @@ class DjFriendService : Service() {
                 }
             }
 
-            // Remove dead controllers
-            val dead = controllerCallbacks.keys.filter { it !in sessions }
-            dead.forEach { c ->
-                c.unregisterCallback(controllerCallbacks[c]!!)
-                if (controllerCallbacks[c].let { true } &&
-                    c.packageName == currentPlayerPackage) {
-                    val stillPlaying = sessions.firstOrNull {
+            // Remove dead controllers and clean up their callbacks
+            val activeSessions = sessions.toSet()
+            val dead = controllerCallbacks.keys.filter { it !in activeSessions }
+            dead.forEach { controller ->
+                val callback = controllerCallbacks[controller]
+                if (callback != null) {
+                    try { controller.unregisterCallback(callback) } catch (_: Exception) {}
+                }
+                // If the dead controller was our active player, hand off to whatever is
+                // currently playing — or clear the package so the next event wins.
+                if (controller.packageName == currentPlayerPackage) {
+                    val nowPlaying = sessions.firstOrNull {
                         it.playbackState?.state == PlaybackState.STATE_PLAYING
                     }
-                    currentPlayerPackage = stillPlaying?.packageName ?: ""
+                    currentPlayerPackage = nowPlaying?.packageName ?: ""
                 }
-                controllerCallbacks.remove(c)
+                controllerCallbacks.remove(controller)
             }
 
         } catch (e: SecurityException) {
@@ -405,6 +423,7 @@ class DjFriendService : Service() {
     // ─── Timeout ──────────────────────────────────────────────────────────────
 
     private fun startTimeout() {
+        cancelTimeout()
         timeoutRunnable = Runnable { stopSelf() }
         mainHandler.postDelayed(timeoutRunnable!!, timeoutDurationMs)
     }
@@ -465,7 +484,6 @@ class DjFriendService : Service() {
         val nowTitle = if (currentTrack.isNotEmpty() && currentArtist.isNotEmpty())
             "Now: $currentTrack by $currentArtist" else "DJ Friend"
 
-        // Content intent: tap notification body → open DJ Friend app
         val openAppIntent = Intent(this, Class.forName("com.djfriend.app.ui.MainActivity")).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -503,7 +521,6 @@ class DjFriendService : Service() {
 
     fun buildActionPendingIntent(globalIndex: Int, s: SuggestionResult, copyFormat: String): PendingIntent {
         val intent = Intent(this, NotificationActionReceiver::class.java).apply {
-            // Unique action per suggestion so Android never coalesces PendingIntents
             action = if (s.isLocal) "${ACTION_PLAY_LOCAL}_$globalIndex"
                      else           "${ACTION_OPEN_SPOTIFY}_$globalIndex"
             putExtra(EXTRA_ARTIST, s.artist)

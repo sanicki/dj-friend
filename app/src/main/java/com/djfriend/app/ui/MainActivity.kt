@@ -11,8 +11,9 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -30,6 +31,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.djfriend.app.service.DjFriendService
 import org.json.JSONObject
+
+// ─── Screen enum ──────────────────────────────────────────────────────────────
+private enum class Screen { WELCOME, MAIN, SETTINGS }
 
 // ─── Data class for UI state broadcast from service ───────────────────────────
 data class NowPlayingState(
@@ -55,29 +59,156 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent { MaterialTheme { DjFriendApp() } }
     }
-
-    // Back button/gesture moves the app to the background rather than finishing it,
-    // so the service keeps running unaffected.
-    @Deprecated("Overridden to prevent activity finish")
-    override fun onBackPressed() {
-        moveTaskToBack(true)
-    }
 }
 
 @Composable
 fun DjFriendApp() {
-    var showSettings by remember { mutableStateOf(false) }
-    if (showSettings) {
-        SettingsScreen(onBack = { showSettings = false })
-    } else {
-        MainScreen(onSettings = { showSettings = true })
+    val context = LocalContext.current
+    val prefs   = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+    val hasSeenWelcome = prefs.getBoolean("has_seen_welcome", false)
+
+    var screen by remember { mutableStateOf(if (hasSeenWelcome) Screen.MAIN else Screen.WELCOME) }
+    var showExitDialog by remember { mutableStateOf(false) }
+
+    // Handle system back button/gesture
+    val activity = context as? ComponentActivity
+    DisposableEffect(screen) {
+        val callback = object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                when (screen) {
+                    Screen.WELCOME  -> { /* no-op on welcome screen */ }
+                    Screen.SETTINGS -> screen = Screen.MAIN
+                    Screen.MAIN     -> showExitDialog = true
+                }
+            }
+        }
+        activity?.onBackPressedDispatcher?.addCallback(callback)
+        onDispose { callback.remove() }
+    }
+
+    when (screen) {
+        Screen.WELCOME  -> WelcomeScreen(onDone = {
+            prefs.edit().putBoolean("has_seen_welcome", true).apply()
+            screen = Screen.MAIN
+        })
+        Screen.MAIN     -> MainScreen(
+            onSettings     = { screen = Screen.SETTINGS },
+            showExitDialog = showExitDialog,
+            onExitConfirm  = { activity?.finish() },
+            onExitDismiss  = { showExitDialog = false }
+        )
+        Screen.SETTINGS -> SettingsScreen(onBack = { screen = Screen.MAIN })
+    }
+}
+
+// ─── Welcome / First-run Screen ───────────────────────────────────────────────
+
+@Composable
+fun WelcomeScreen(onDone: () -> Unit) {
+    Surface(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .padding(24.dp)
+                .verticalScroll(rememberScrollState())
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(Modifier.height(16.dp))
+            Text("Welcome to DJ Friend 🎧", style = MaterialTheme.typography.headlineMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "DJ Friend runs in the background, detects what you're playing, and suggests similar tracks from Last.fm — right in your notification shade and in this app.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            Text(
+                "First-time setup",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.align(Alignment.Start)
+            )
+
+            SetupStep(
+                number = "1",
+                text   = "Open Settings and work through the permission buttons:"
+            )
+            SetupDetail("Allow Notifications — lets DJ Friend post its notification")
+            SetupDetail("Grant Music Access — lets DJ Friend check suggestions against your local library")
+            SetupDetail("Grant Notification Listener Access — required for media monitoring; opens system settings, find DJ Friend in the list and enable it")
+            SetupDetail("Disable Battery Optimisation — recommended, prevents Android from killing the service")
+
+            SetupStep(
+                number = "2",
+                text   = "Optionally install SpotiFLAC and/or Spotify to preview songs not in your local music library."
+            )
+            SetupDetail("SpotiFLAC and Spotify install links are in Settings")
+
+            SetupStep(
+                number = "3",
+                text   = "Tap Start on the main screen."
+            )
+
+            SetupStep(
+                number = "4",
+                text   = "Play any song in any music app. Suggestions will appear in your notification shade and in the app within a few seconds."
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            Button(
+                onClick = onDone,
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.extraLarge
+            ) {
+                Text("Get Started")
+            }
+
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun SetupStep(number: String, text: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            "$number.",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.width(20.dp)
+        )
+        Text(text, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun SetupDetail(text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 28.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text("•", style = MaterialTheme.typography.bodySmall)
+        Text(text, style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 // ─── Main / Now Playing Screen ────────────────────────────────────────────────
 
 @Composable
-fun MainScreen(onSettings: () -> Unit) {
+fun MainScreen(
+    onSettings:     () -> Unit,
+    showExitDialog: Boolean,
+    onExitConfirm:  () -> Unit,
+    onExitDismiss:  () -> Unit
+) {
     val context = LocalContext.current
 
     fun isServiceRunning() =
@@ -86,6 +217,21 @@ fun MainScreen(onSettings: () -> Unit) {
 
     var isRunning     by remember { mutableStateOf(isServiceRunning()) }
     var nowPlaying    by remember { mutableStateOf(NowPlayingState()) }
+
+    // Exit confirmation dialog
+    if (showExitDialog) {
+        AlertDialog(
+            onDismissRequest = onExitDismiss,
+            title   = { Text("Exit DJ Friend") },
+            text    = { Text("Are you sure? The service will keep running in the background if already started.") },
+            confirmButton = {
+                TextButton(onClick = onExitConfirm) { Text("Yes") }
+            },
+            dismissButton = {
+                TextButton(onClick = onExitDismiss) { Text("No") }
+            }
+        )
+    }
 
     // Listen for state broadcasts from the service
     DisposableEffect(Unit) {
@@ -114,7 +260,6 @@ fun MainScreen(onSettings: () -> Unit) {
     val prefs      = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
     val copyFormat = prefs.getString("copy_format", "song_only") ?: "song_only"
 
-    // Helper to send a page request using the current songs_per_page setting
     fun requestPage(offset: Int) {
         val pageSize = prefs.getInt("songs_per_page", Int.MAX_VALUE).let {
             if (it == Int.MAX_VALUE) 1000 else it
@@ -155,7 +300,6 @@ fun MainScreen(onSettings: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Start / Stop
                 Button(
                     onClick = {
                         if (isRunning) {
@@ -175,7 +319,6 @@ fun MainScreen(onSettings: () -> Unit) {
                     )
                 ) { Text(if (isRunning) "Stop" else "Start") }
 
-                // Settings
                 OutlinedButton(
                     onClick = onSettings,
                     modifier = Modifier.weight(1f),
@@ -183,7 +326,6 @@ fun MainScreen(onSettings: () -> Unit) {
                 ) { Text("Settings") }
             }
 
-            // Now Playing button — opens the active media player app
             if (nowPlaying.currentTrack.isNotEmpty()) {
                 Button(
                     onClick = {
@@ -212,7 +354,6 @@ fun MainScreen(onSettings: () -> Unit) {
                 ) { Text("Listening for music...") }
             }
 
-            // Suggestion buttons — up to 10 per page
             if (nowPlaying.suggestions.isNotEmpty()) {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                 Text(
@@ -238,7 +379,6 @@ fun MainScreen(onSettings: () -> Unit) {
                     }
                 }
 
-                // Back / More row — hide Back entirely when showing All songs
                 val showingAll = prefs.getInt("songs_per_page", Int.MAX_VALUE) == Int.MAX_VALUE
                 if (!showingAll || nowPlaying.canGoMore) {
                     Row(
@@ -565,6 +705,25 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
+            // SpotiFLAC — listed first, always opens GitHub releases page
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW,
+                            Uri.parse("https://github.com/zarzet/SpotiFLAC-Mobile/releases"))
+                            .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                    )
+                },
+                shape = MaterialTheme.shapes.extraLarge,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (spotiflacInstalled) "SpotiFLAC Installed" else "Install SpotiFLAC",
+                    color = if (spotiflacInstalled) MaterialTheme.colorScheme.tertiary
+                            else                   MaterialTheme.colorScheme.primary
+                )
+            }
+
             // Spotify — always opens Play Store
             OutlinedButton(
                 onClick = {
@@ -584,27 +743,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            // SpotiFLAC — always opens GitHub releases page
-            OutlinedButton(
-                onClick = {
-                    context.startActivity(
-                        Intent(Intent.ACTION_VIEW,
-                            Uri.parse("https://github.com/zarzet/SpotiFLAC-Mobile/releases")
-                        ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                    )
-                },
-                shape = MaterialTheme.shapes.extraLarge,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    if (spotiflacInstalled) "SpotiFLAC Installed" else "Install SpotiFLAC",
-                    color = if (spotiflacInstalled) MaterialTheme.colorScheme.tertiary
-                            else                   MaterialTheme.colorScheme.primary
-                )
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
+            // ── "Powered by Last.fm" attribution — no divider above ───────────
+            Spacer(Modifier.height(4.dp))
             Text(
                 "Powered by Last.fm",
                 style = MaterialTheme.typography.bodySmall,
@@ -627,7 +767,6 @@ private fun handleSuggestionTap(context: Context, s: SuggestionUiItem, copyForma
         cb.setPrimaryClip(android.content.ClipData.newPlainText("DJ Friend", text))
         android.widget.Toast.makeText(context, "Copied: $text", android.widget.Toast.LENGTH_SHORT).show()
     } else {
-        // Delegate to shared resolver — handles iTunes → Odesli → Spotify URL + web_action pref
         com.djfriend.app.receiver.NotificationActionReceiver.handleWebSuggestionTap(
             context, s.artist, s.track
         )
