@@ -11,6 +11,7 @@ import com.djfriend.app.api.SpotifyLinkResolver
 import com.djfriend.app.service.DjFriendService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class NotificationActionReceiver : BroadcastReceiver() {
@@ -22,13 +23,15 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
         /**
          * Shared handler for tapping a non-local suggestion from either the notification
-         * or the in-app suggestion list. Resolves iTunes → Odesli → Spotify URL, then
-         * acts based on the "web_action" pref:
+         * or the in-app suggestion list. Resolves iTunes → Odesli (song.link) → Spotify URL,
+         * then acts based on the "web_action" pref:
          *
-         *   "spotiflac" → resolve Spotify URL; if found copy it and open SpotiFLAC (or Spotify
-         *                 as fallback if SpotiFLAC is not installed); if lookup fails copy
-         *                 "artist - track" instead.
-         *   "spotify"   → resolve Spotify URL; copy "artist - track", open Spotify URL directly.
+         *   "spotiflac" → if URL found: copy Spotify URL, open SpotiFLAC (fallback to Spotify).
+         *                 if URL not found: copy "artist - track", open SpotiFLAC (fallback to Spotify).
+         *   "spotify"   → copy "artist - track", open Spotify URL (or search URL as fallback).
+         *
+         * A brief delay is inserted before launching any external app so the "Copied:" Toast
+         * has time to render before the foreground changes.
          */
         fun handleWebSuggestionTap(context: Context, artist: String, track: String) {
             val prefs     = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
@@ -42,16 +45,13 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 when (webAction) {
                     "spotiflac" -> {
                         if (spotifyUrl != null) {
-                            // Spotify URL resolved — copy it, show toast, open SpotiFLAC (or Spotify)
                             copyToClipboard(context, spotifyUrl)
                             Toast.makeText(
                                 context,
                                 "Copied: Spotify URL for $artist - $track",
                                 Toast.LENGTH_SHORT
                             ).show()
-                            openSpotiflacOrSpotify(context, spotifyUrl)
                         } else {
-                            // Lookup failed — copy "artist - track" as fallback
                             val fallbackText = "$artist - $track"
                             copyToClipboard(context, fallbackText)
                             Toast.makeText(
@@ -59,11 +59,13 @@ class NotificationActionReceiver : BroadcastReceiver() {
                                 "Copied: $fallbackText",
                                 Toast.LENGTH_SHORT
                             ).show()
-                            openSpotiflacOrSpotify(context, null)
                         }
+                        // Small delay so the toast renders before the app switches foreground
+                        delay(250)
+                        openSpotiflacOrSpotify(context, spotifyUrl)
                     }
                     else -> {
-                        // "spotify" action: copy "artist - track", open Spotify URL
+                        // "spotify": copy "artist - track", open Spotify URL
                         val artistTrack = "$artist - $track"
                         copyToClipboard(context, artistTrack)
                         val urlToOpen = spotifyUrl
@@ -73,6 +75,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
                             "Copied: $artistTrack",
                             Toast.LENGTH_SHORT
                         ).show()
+                        // Small delay so the toast renders before the app switches foreground
+                        delay(250)
                         context.startActivity(
                             Intent(Intent.ACTION_VIEW, Uri.parse(urlToOpen))
                                 .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
@@ -85,7 +89,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
         /**
          * Opens SpotiFLAC if installed; falls back to Spotify app (via URL) if available;
          * falls back to SpotiFLAC GitHub releases page as last resort.
-         * [spotifyUrl] is used to deep-link into Spotify if SpotiFLAC is not present.
+         * [spotifyUrl] is used to deep-link into Spotify if SpotiFLAC is not installed.
          */
         private fun openSpotiflacOrSpotify(context: Context, spotifyUrl: String?) {
             val spotiflacIntent = context.packageManager
@@ -97,7 +101,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 return
             }
 
-            // SpotiFLAC not installed — try opening Spotify directly with the URL
+            // SpotiFLAC not installed — try opening Spotify directly with the resolved URL
             if (spotifyUrl != null) {
                 try {
                     context.startActivity(
