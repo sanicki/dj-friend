@@ -73,6 +73,7 @@ class DjFriendService : Service() {
     private var currentArtist        = ""
     private var currentTrack         = ""
     private var currentPlayerPackage = ""
+    private var currentTrackIsLocal  = false   // true if the now-playing track is in local library
     private var allCandidates        = mutableListOf<SuggestionResult>()
 
     private var timeoutRunnable: Runnable? = null
@@ -111,6 +112,7 @@ class DjFriendService : Service() {
                     currentArtist        = artist
                     currentTrack         = track
                     currentPlayerPackage = pkg
+                    currentTrackIsLocal  = false   // reset until checked
                     allCandidates.clear()
                     fetchSuggestions(artist, track)
                 }
@@ -228,6 +230,7 @@ class DjFriendService : Service() {
                             currentArtist        = artist
                             currentTrack         = track
                             currentPlayerPackage = pkg
+                            currentTrackIsLocal  = false   // reset until checked
                             allCandidates.clear()
                             fetchSuggestions(artist, track)
                         }
@@ -278,6 +281,7 @@ class DjFriendService : Service() {
             }.getOrNull()
 
             if (trackInfo?.track == null) {
+                currentTrackIsLocal = false
                 updateNotification("No Last.fm match for $track", emptyList(), 0)
                 broadcastStateUpdate(0)
                 return@launch
@@ -331,6 +335,8 @@ class DjFriendService : Service() {
             }
 
             allCandidates = rawCandidates
+            // Check if the now-playing track itself is in the local library
+            currentTrackIsLocal = findLocalTrack(artist, track) != null
             withContext(Dispatchers.Main) {
                 updateNotification("Suggested for you:", allCandidates.take(3), 0)
                 broadcastStateUpdate(0)
@@ -409,13 +415,14 @@ class DjFriendService : Service() {
             Intent(ACTION_STATE_UPDATE)
                 .setPackage(packageName)
                 .putExtra(EXTRA_STATE_JSON, JSONObject().apply {
-                    put("currentArtist",  currentArtist)
-                    put("currentTrack",   currentTrack)
-                    put("currentPackage", currentPlayerPackage)
-                    put("pageOffset",     pageOffset)
-                    put("canGoBack",      canGoBack)
-                    put("canGoMore",      canGoMore)
-                    put("suggestions",    suggestionsJson)
+                    put("currentArtist",     currentArtist)
+                    put("currentTrack",      currentTrack)
+                    put("currentPackage",    currentPlayerPackage)
+                    put("currentTrackLocal", currentTrackIsLocal)
+                    put("pageOffset",        pageOffset)
+                    put("canGoBack",         canGoBack)
+                    put("canGoMore",         canGoMore)
+                    put("suggestions",       suggestionsJson)
                 }.toString())
         )
     }
