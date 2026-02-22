@@ -24,35 +24,57 @@ class NotificationActionReceiver : BroadcastReceiver() {
          * Shared handler for tapping a non-local suggestion from either the notification
          * or the in-app suggestion list. Resolves iTunes → Odesli → Spotify URL, then
          * acts based on the "web_action" pref:
-         *   "spotiflac" → copy Spotify URL, open SpotiFLAC
-         *   "spotify"   → copy "Track by Artist", open Spotify URL
+         *
+         *   "spotiflac" → resolve Spotify URL; if found copy it and open SpotiFLAC (or Spotify
+         *                 as fallback if SpotiFLAC is not installed); if lookup fails copy
+         *                 "artist - track" instead.
+         *   "spotify"   → resolve Spotify URL; copy "artist - track", open Spotify URL directly.
          */
         fun handleWebSuggestionTap(context: Context, artist: String, track: String) {
             val prefs     = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
             val webAction = prefs.getString("web_action", "spotiflac") ?: "spotiflac"
 
-            // Show immediate feedback while resolving
             Toast.makeText(context, "Finding link…", Toast.LENGTH_SHORT).show()
 
             CoroutineScope(Dispatchers.Main).launch {
                 val spotifyUrl = SpotifyLinkResolver.resolve(artist, track)
-                    ?: run {
-                        // Fallback: plain Spotify search URL
-                        val q = Uri.encode("$track $artist")
-                        "https://open.spotify.com/search/$q"
-                    }
 
                 when (webAction) {
                     "spotiflac" -> {
-                        // Copy Spotify URL, open SpotiFLAC
-                        copyToClipboard(context, spotifyUrl)
-                        openSpotiflac(context)
+                        if (spotifyUrl != null) {
+                            // Spotify URL resolved — copy it, show toast, open SpotiFLAC (or Spotify)
+                            copyToClipboard(context, spotifyUrl)
+                            Toast.makeText(
+                                context,
+                                "Copied: Spotify URL for $artist - $track",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            openSpotiflacOrSpotify(context, spotifyUrl)
+                        } else {
+                            // Lookup failed — copy "artist - track" as fallback
+                            val fallbackText = "$artist - $track"
+                            copyToClipboard(context, fallbackText)
+                            Toast.makeText(
+                                context,
+                                "Copied: $fallbackText",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            openSpotiflacOrSpotify(context, null)
+                        }
                     }
                     else -> {
-                        // Copy "Track by Artist", open Spotify URL
-                        copyToClipboard(context, "$track by $artist")
+                        // "spotify" action: copy "artist - track", open Spotify URL
+                        val artistTrack = "$artist - $track"
+                        copyToClipboard(context, artistTrack)
+                        val urlToOpen = spotifyUrl
+                            ?: "https://open.spotify.com/search/${Uri.encode("$track $artist")}"
+                        Toast.makeText(
+                            context,
+                            "Copied: $artistTrack",
+                            Toast.LENGTH_SHORT
+                        ).show()
                         context.startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse(spotifyUrl))
+                            Intent(Intent.ACTION_VIEW, Uri.parse(urlToOpen))
                                 .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
                         )
                     }
@@ -60,18 +82,38 @@ class NotificationActionReceiver : BroadcastReceiver() {
             }
         }
 
-        private fun openSpotiflac(context: Context) {
-            // Try SpotiFLAC app first; fall back to Play Store page
-            val launch = context.packageManager.getLaunchIntentForPackage("com.zarz.spotiflac")
-            if (launch != null) {
-                context.startActivity(launch.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
-            } else {
-                context.startActivity(
-                    Intent(Intent.ACTION_VIEW,
-                        Uri.parse("https://github.com/zarzet/SpotiFLAC-Mobile/releases"))
-                        .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                )
+        /**
+         * Opens SpotiFLAC if installed; falls back to Spotify app (via URL) if available;
+         * falls back to SpotiFLAC GitHub releases page as last resort.
+         * [spotifyUrl] is used to deep-link into Spotify if SpotiFLAC is not present.
+         */
+        private fun openSpotiflacOrSpotify(context: Context, spotifyUrl: String?) {
+            val spotiflacIntent = context.packageManager
+                .getLaunchIntentForPackage("com.zarz.spotiflac")
+            if (spotiflacIntent != null) {
+                context.startActivity(spotiflacIntent.apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+                return
             }
+
+            // SpotiFLAC not installed — try opening Spotify directly with the URL
+            if (spotifyUrl != null) {
+                try {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse(spotifyUrl))
+                            .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                    )
+                    return
+                } catch (_: Exception) { /* fall through */ }
+            }
+
+            // Last resort: SpotiFLAC GitHub releases page
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW,
+                    Uri.parse("https://github.com/zarzet/SpotiFLAC-Mobile/releases"))
+                    .apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+            )
         }
 
         fun copyToClipboard(context: Context, text: String) {
@@ -99,7 +141,6 @@ class NotificationActionReceiver : BroadcastReceiver() {
                     copyToClipboard(context, text)
                     Toast.makeText(context, "Copied: $text", Toast.LENGTH_SHORT).show()
                 } else {
-                    // Use goAsync() so we can launch a coroutine from onReceive
                     val pending = goAsync()
                     CoroutineScope(Dispatchers.Main).launch {
                         try {
