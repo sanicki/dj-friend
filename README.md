@@ -14,7 +14,7 @@ DJ Friend runs quietly in the background as a foreground service. When it detect
 - **Three-tier recommendation engine** using Last.fm (`track.getSimilar` → `artist.getSimilar` → `artist.getTopTracks`)
 - **Results sorted by match score** — the highest-confidence suggestions are always shown first
 - **Fuzzy-matches suggestions against your local library** using Levenshtein distance, with `The Artist` / `Artist, The` normalisation and parenthetical stripping (`Wannabe (Radio Edit)` matches `Wannabe`)
-- **One tap to act** — local files copy to clipboard (and optionally open your player), web tracks resolve via iTunes → Odesli to a real Spotify URL then open Spotify or SpotiFLAC
+- **One tap to act** — local files copy to clipboard, web tracks resolve via iTunes → Odesli to a real Spotify URL then open SpotiFLAC or Spotify
 - **Paginated in-app suggestion list** — browse all available candidates with Back / More navigation
 
 ---
@@ -30,7 +30,7 @@ DJ Friend runs quietly in the background as a foreground service. When it detect
 - Android 9 (API 28) or higher
 - A free [Last.fm API key](https://www.last.fm/api/account/create)
 - Notification listener permission (granted once in Settings)
-- [Spotify](https://play.google.com/store/apps/details?id=com.spotify.music) and/or [SpotiFLAC](https://github.com/zarzet/SpotiFLAC-Mobile/releases) installed (optional, for web suggestions)
+- [SpotiFLAC](https://github.com/zarzet/SpotiFLAC-Mobile/releases) and/or [Spotify](https://play.google.com/store/apps/details?id=com.spotify.music) installed (optional, to preview songs not in your local music library)
 
 ---
 
@@ -101,6 +101,8 @@ Version numbers are determined automatically by reading existing git tags — no
 
 ## First-time setup on device
 
+A welcome screen is shown on first launch with these same instructions.
+
 After installing the APK:
 
 1. Open **DJ Friend** and work through the Settings buttons:
@@ -108,7 +110,7 @@ After installing the APK:
    - **Grant Music Access** — lets DJ Friend check suggestions against your local library
    - **Grant Notification Listener Access** — required for MediaSession monitoring; opens the system settings page, find DJ Friend in the list and enable it
    - **Disable Battery Optimisation** — recommended, prevents Android from killing the service
-2. Optionally install **Spotify** and/or **SpotiFLAC** for web suggestions.
+2. Optionally install **SpotiFLAC** and/or **Spotify** to preview songs not in your local music library.
 3. Go back to the main screen and tap **Start**.
 4. Play any song in any music app. Suggestions will appear in your notification shade and in the app within a few seconds.
 
@@ -119,7 +121,7 @@ After installing the APK:
 The main screen shows:
 
 - **Now Playing: Track by Artist** — tapping opens the active media player app
-- **Suggestion buttons** — each shows the track name, artist, and a ✔ (in your local library) or ✗ (web only) symbol. Local matches are **bold**. Tapping a local match copies it to clipboard. Tapping a web match resolves a real Spotify URL via iTunes + Odesli, then either opens SpotiFLAC (default) or Spotify depending on your setting.
+- **Suggestion buttons** — each shows the track name, artist, and a ✔ (in your local library) or ✗ (web only) symbol. Local matches are **bold**. Tapping a local match copies it to clipboard. Tapping a web match resolves a real Spotify URL via iTunes + Odesli, then either opens SpotiFLAC (default, with fallback to Spotify if SpotiFLAC is not installed) or Spotify depending on your setting.
 - **Back / More** — paginate through all available candidates when "Songs per page" is set to 5 or 10.
 
 ---
@@ -129,8 +131,16 @@ The main screen shows:
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
 | When I tap a song in my library | Copy song name / Copy artist - song name | Copy song name | What gets copied to clipboard for local matches |
-| When I tap a song NOT in my library | Open SpotiFLAC / Open Spotify | Open SpotiFLAC | Whether to open SpotiFLAC (with Spotify URL on clipboard) or open Spotify directly |
+| When I tap a song NOT in my library | Open SpotiFLAC / Open Spotify | Open SpotiFLAC | Whether to open SpotiFLAC (with Spotify URL on clipboard, falling back to Spotify if SpotiFLAC is not installed) or open Spotify directly (copies "artist - track" to clipboard) |
 | Songs per page | 5 / 10 / All | All | How many suggestions to show at once in the app |
+
+### Web suggestion behaviour in detail
+
+| Setting | Spotify URL found | Behaviour |
+|---------|-------------------|-----------|
+| Open SpotiFLAC | Yes | Copies Spotify URL → opens SpotiFLAC (falls back to Spotify if not installed) |
+| Open SpotiFLAC | No | Copies "Artist - Track" → opens SpotiFLAC (falls back to Spotify if not installed) |
+| Open Spotify | Yes or No | Copies "Artist - Track" → opens Spotify URL (or search URL as fallback) |
 
 ---
 
@@ -138,9 +148,10 @@ The main screen shows:
 
 ```
 MainActivity  ──────────────────────────────────────────────────────────┐
-  ├── DjFriendApp()      Compose root                                     │
-  ├── MainScreen()       Now Playing + Suggestion list                    │
-  └── SettingsScreen()   Preferences + permission buttons                 │
+  ├── DjFriendApp()      Compose root + screen routing                   │
+  ├── WelcomeScreen()    First-run setup instructions                    │
+  ├── MainScreen()       Now Playing + Suggestion list                   │
+  └── SettingsScreen()   Preferences + permission buttons                │
                                                                           │
 DjFriendService  (ForegroundService) ◄──────── starts/stops ─────────────┘
   │
@@ -163,7 +174,7 @@ DjFriendService  (ForegroundService) ◄──────── starts/stops �
 NotificationActionReceiver
   ├── Local tap  → clipboard copy
   └── Web tap    → SpotifyLinkResolver (iTunes → Odesli → Spotify URL)
-                        └── open SpotiFLAC or Spotify per setting
+                        └── open SpotiFLAC (fallback: Spotify) or Spotify per setting
 
 SpotifyLinkResolver
   ├── iTunes Search API   itunes.apple.com/search?term=...
@@ -204,7 +215,7 @@ app/src/main/
 │   │   ├── DjFriendService.kt          Core foreground service
 │   │   └── MediaSessionListenerService.kt
 │   ├── ui/
-│   │   └── MainActivity.kt             Jetpack Compose UI (Main + Settings screens)
+│   │   └── MainActivity.kt             Jetpack Compose UI (Welcome + Main + Settings screens)
 │   └── util/
 │       └── FuzzyMatcher.kt             Levenshtein distance + normalisation
 └── res/
@@ -243,6 +254,12 @@ External APIs used (no additional dependencies — plain `HttpURLConnection`):
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | Access active MediaSessions across all apps |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Keep running when screen is off |
 | `RECEIVE_BOOT_COMPLETED` | Auto-start after device reboot |
+
+---
+
+## Known limitations
+
+- **Spotify longpress paste** — when "Open Spotify" is selected, DJ Friend copies "Artist - Track" to the clipboard and opens a Spotify URL. Spotify's in-app browser/search field may not support longpress-to-paste on some devices; use your keyboard's clipboard button instead. This is a Spotify UI limitation, not a DJ Friend bug.
 
 ---
 
