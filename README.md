@@ -16,7 +16,6 @@ DJ Friend runs quietly in the background as a foreground service. When it detect
 - **Fuzzy-matches suggestions against your local library** using Levenshtein distance, with `The Artist` / `Artist, The` normalisation and parenthetical stripping (`Wannabe (Radio Edit)` matches `Wannabe`)
 - **One tap to act** — local files copy to clipboard (and optionally open your player), web tracks resolve via iTunes → Odesli to a real Spotify URL then open Spotify or SpotiFLAC
 - **Paginated in-app suggestion list** — browse all available candidates with Back / More navigation
-- **Self-updating** — checks GitHub Releases on launch and offers an in-app download + install if a newer version is available
 
 ---
 
@@ -55,7 +54,6 @@ DJ Friend runs quietly in the background as a foreground service. When it detect
    ```properties
    sdk.dir=/path/to/your/android/sdk
    LASTFM_API_KEY=your_lastfm_api_key_here
-   GITHUB_REPO=your-username/dj-friend
    ```
 
 3. Build a debug APK:
@@ -68,7 +66,6 @@ DJ Friend runs quietly in the background as a foreground service. When it detect
    ```bash
    ./gradlew assembleRelease \
      -PLASTFM_API_KEY=your_key \
-     -PGITHUB_REPO=your-username/dj-friend \
      -Pandroid.injected.signing.store.file=/path/to/keystore.jks \
      -Pandroid.injected.signing.store.password=YOUR_STORE_PASS \
      -Pandroid.injected.signing.key.alias=YOUR_ALIAS \
@@ -97,7 +94,6 @@ Version numbers are determined automatically by reading existing git tags — no
 | `SIGNING_KEY_ALIAS` | Key alias inside the keystore |
 | `SIGNING_KEY_PASSWORD` | Key password |
 | `LASTFM_API_KEY` | Your Last.fm API key |
-| `GITHUB_REPO` | Your repo path, e.g. `your-username/dj-friend` (used for self-update checks) |
 
 > See `SETUP_GUIDE.html` for step-by-step instructions on generating a keystore in Termux and adding secrets to GitHub.
 
@@ -142,7 +138,6 @@ The main screen shows:
 
 ```
 MainActivity  ──────────────────────────────────────────────────────────┐
-  ├── UpdateChecker      GitHub Releases API → self-update dialog        │
   ├── DjFriendApp()      Compose root                                     │
   ├── MainScreen()       Now Playing + Suggestion list                    │
   └── SettingsScreen()   Preferences + permission buttons                 │
@@ -211,9 +206,7 @@ app/src/main/
 │   ├── ui/
 │   │   └── MainActivity.kt             Jetpack Compose UI (Main + Settings screens)
 │   └── util/
-│       ├── ApkInstaller.kt             Download + install APK update
-│       ├── FuzzyMatcher.kt             Levenshtein distance + normalisation
-│       └── UpdateChecker.kt            GitHub Releases version check
+│       └── FuzzyMatcher.kt             Levenshtein distance + normalisation
 └── res/
     ├── values/strings.xml
     ├── values/themes.xml
@@ -249,7 +242,6 @@ External APIs used (no additional dependencies — plain `HttpURLConnection`):
 | `READ_MEDIA_AUDIO` | Search local music library |
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | Access active MediaSessions across all apps |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Keep running when screen is off |
-| `REQUEST_INSTALL_PACKAGES` | Install downloaded APK updates |
 | `RECEIVE_BOOT_COMPLETED` | Auto-start after device reboot |
 
 ---
