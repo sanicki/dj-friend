@@ -62,7 +62,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
         private fun openSpotiflac(context: Context) {
             // Try SpotiFLAC app first; fall back to Play Store page
-            val launch = context.packageManager.getLaunchIntentForPackage("com.spotiflac.android")
+            val launch = context.packageManager.getLaunchIntentForPackage("com.zarz.spotiflac")
             if (launch != null) {
                 context.startActivity(launch.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
             } else {
