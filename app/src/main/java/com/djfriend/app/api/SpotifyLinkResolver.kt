@@ -37,11 +37,13 @@ object SpotifyLinkResolver {
             val encoded = URLEncoder.encode(itunesUrl, "UTF-8")
             val url     = URL("https://api.odesli.co/v1-alpha.1/links?url=$encoded")
             val conn    = url.openConnection() as HttpURLConnection
+            // Add the User-Agent here as well
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile) DJFriend/1.0")
             conn.setRequestProperty("Accept", "application/json")
             conn.connectTimeout = 8_000
             conn.readTimeout    = 8_000
             val json = JSONObject(conn.inputStream.bufferedReader().readText())
-            // Odesli response: { "linksByPlatform": { "spotify": { "url": "..." } } }
+            
             json.optJSONObject("linksByPlatform")
                 ?.optJSONObject("spotify")
                 ?.optString("url")
