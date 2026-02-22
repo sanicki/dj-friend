@@ -21,7 +21,9 @@ DJ Friend runs quietly in the background as a foreground service. When it detect
 
 ## Screenshots
 
-> _Add screenshots here once the app is built._
+| Main screen | Settings | Notification |
+|:-----------:|:--------:|:------------:|
+| ![Main screen showing Now Playing and suggestions](screenshots/screenshot_main.jpg) | ![Settings screen](screenshots/screenshot_settings.jpg) | ![Notification with three suggestion action buttons](screenshots/screenshot_notification.jpg) |
 
 ---
 
