@@ -15,7 +15,9 @@ object FuzzyMatcher {
     }
 
     fun normalize(input: String): String =
-        input.lowercase()
+        input
+            .replace(Regex("\\s*[\\(\\[][^\\)\\]]*[\\)\\]]"), "") // strip (...) and [...] and their contents
+            .lowercase()
             .replace(Regex("[^a-z0-9 ]"), "")
             .replace(Regex("\\s+"), " ")
             .trim()
