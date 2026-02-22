@@ -19,6 +19,15 @@ android {
         // or defined in local.properties for local dev builds.
         def apiKey = findProperty('LASTFM_API_KEY') ?: localPropsValue('LASTFM_API_KEY')
         buildConfigField "String", "LASTFM_API_KEY", "\"${apiKey}\""
+
+        // GitHub repo for self-update checks: "owner/repo-name"
+        // Pass as -PDJFRIEND_REPO=owner/repo on the Gradle command line, or add to local.properties:
+        //   DJFRIEND_REPO=owner/repo-name
+        def githubRepo = findProperty('DJFRIEND_REPO') ?: localPropsValue('DJFRIEND_REPO')
+        buildConfigField "String", "GITHUB_REPO", "\"${githubRepo}\""
+
+        // Bake the version name into BuildConfig so the update checker can compare it at runtime
+        buildConfigField "String", "VERSION_NAME_STRING", "\"${versionName}\""
     }
 
     buildFeatures {

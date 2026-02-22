@@ -56,6 +56,7 @@ jobs:
         run: |
           ./gradlew assembleRelease \
             -PLASTFM_API_KEY="${{ secrets.LASTFM_API_KEY }}" \
+            -PDJFRIEND_REPO="${{ secrets.DJFRIEND_REPO }}" \
             -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/keystore.jks \
             -Pandroid.injected.signing.store.password=${{ secrets.SIGNING_STORE_PASSWORD }} \
             -Pandroid.injected.signing.key.alias=${{ secrets.SIGNING_KEY_ALIAS }} \
