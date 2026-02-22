@@ -52,6 +52,8 @@ object SpotifyLinkResolver {
     /** URL.readText() helper to avoid needing okhttp just for a simple GET */
     private fun URL.readText(): String {
         val conn = openConnection() as HttpURLConnection
+        // Add a standard User-Agent header
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile) DJFriend/1.0")
         conn.connectTimeout = 8_000
         conn.readTimeout    = 8_000
         return conn.inputStream.bufferedReader().readText()
