@@ -554,6 +554,17 @@ fun SettingsScreen(onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Disable Battery Optimisation") }
 
+            Spacer(Modifier.height(4.dp))
+
+            // Back to main — above the install bar
+            Button(
+                onClick = onBack,
+                shape = MaterialTheme.shapes.extraLarge,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Back to DJ Friend") }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
             // Spotify — always opens Play Store
             OutlinedButton(
                 onClick = {
@@ -572,6 +583,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                             else                 MaterialTheme.colorScheme.primary
                 )
             }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
             // SpotiFLAC — always opens GitHub releases page
             OutlinedButton(
@@ -592,14 +605,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
-            // Back to main
-            Button(
-                onClick = onBack,
-                shape = MaterialTheme.shapes.extraLarge,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Back to DJ Friend") }
+            Text(
+                "Powered by Last.fm",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
