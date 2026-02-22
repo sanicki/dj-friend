@@ -163,7 +163,6 @@ Version numbers are determined automatically by reading existing git tags — no
 | `SIGNING_KEY_PASSWORD` | Key password |
 | `LASTFM_API_KEY` | Your Last.fm API key |
 
-> See `SETUP_GUIDE.html` for step-by-step instructions on generating a keystore in Termux and adding secrets to GitHub.
 
 ---
 
