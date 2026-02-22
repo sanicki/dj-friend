@@ -26,6 +26,7 @@ jobs:
           NEXT_MAJOR=$((MAJOR + 1))
           NEW_TAG="v${NEXT_MAJOR}.0.0"
           echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          echo "version=${NEW_TAG#v}" >> $GITHUB_OUTPUT
           echo "Next major version: $NEW_TAG"
 
       - name: Set up JDK 17
@@ -56,6 +57,7 @@ jobs:
           ./gradlew assembleRelease \
             -PLASTFM_API_KEY="${{ secrets.LASTFM_API_KEY }}" \
             -PDJFRIEND_REPO="${{ secrets.DJFRIEND_REPO }}" \
+            -PappVersionName="${{ steps.version.outputs.version }}" \
             -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/keystore.jks \
             -Pandroid.injected.signing.store.password=${{ secrets.SIGNING_STORE_PASSWORD }} \
             -Pandroid.injected.signing.key.alias=${{ secrets.SIGNING_KEY_ALIAS }} \
