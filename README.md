@@ -25,24 +25,91 @@ DJ Friend runs quietly in the background as a foreground service. When it detect
 
 ---
 
-## Requirements
+## Downloading and installing
+
+1. Go to the [**Releases**](../../releases) page and download the latest `djfriend.vX.Y.Z.apk`.
+2. Before installing, you must allow your device to install apps from outside the Play Store. See [How to enable Install from Unknown Sources](https://www.samsung.com/ae/support/mobile-devices/how-to-enable-permission-to-install-apps-from-unknown-source-on-my-samsung-phone/) — the steps are similar on all Android devices, though menu names vary by manufacturer.
+3. Open the downloaded APK to install it, then follow the first-time setup below.
+
+---
+
+## First-time setup on device
+
+A welcome screen is shown on first launch with these same instructions.
+
+After installing the APK:
+
+1. Open **DJ Friend** and work through the Settings buttons:
+   - **Allow Notifications** — lets DJ Friend post its notification
+   - **Grant Music Access** — lets DJ Friend check suggestions against your local library
+   - **Grant Notification Listener Access** — required for MediaSession monitoring; opens the system settings page, find DJ Friend in the list and enable it
+   - **Disable Battery Optimisation** — recommended, prevents Android from killing the service
+2. Optionally install **SpotiFLAC** and/or **Spotify** to preview songs not in your local music library.
+3. Go back to the main screen and tap **Start**.
+4. Play any song in any music app. Suggestions will appear in your notification shade and in the app within a few seconds.
+
+---
+
+## In-app suggestion list
+
+The main screen shows:
+
+- **Now Playing: Track by Artist** — if the current track is in your local library, tapping opens the active media player app (button appears in the normal faded purple). If it is *not* in your library, the button turns faded maroon and tapping behaves like a web suggestion — resolving a Spotify link and opening SpotiFLAC or Spotify per your setting.
+- **Suggestion buttons** — each shows the track name, artist, and a ✔ (in your local library) or ✗ (web only) symbol. Local matches are **bold**. Tapping a local match copies it to clipboard. Tapping a web match resolves a real Spotify URL via iTunes + Odesli, then either opens SpotiFLAC (default, with fallback to Spotify if SpotiFLAC is not installed) or Spotify depending on your setting.
+- **Back / More** — paginate through all available candidates when "Songs per page" is set to 5 or 10.
+
+---
+
+## Settings reference
+
+| Setting | Options | Default | Description |
+|---------|---------|---------|-------------|
+| When I tap a song in my library | Copy song name / Copy artist - song name | Copy song name | What gets copied to clipboard for local matches |
+| When I tap a song NOT in my library | Open SpotiFLAC / Open Spotify | Open SpotiFLAC | Whether to open SpotiFLAC (with Spotify URL on clipboard, falling back to Spotify if SpotiFLAC is not installed) or open Spotify directly (copies "artist - track" to clipboard) |
+| Songs per page | 5 / 10 / All | All | How many suggestions to show at once in the app |
+
+### Web suggestion behaviour in detail
+
+| Setting | Spotify URL found | Behaviour |
+|---------|-------------------|-----------|
+| Open SpotiFLAC | Yes | Copies Spotify URL → opens SpotiFLAC (falls back to Spotify if not installed) |
+| Open SpotiFLAC | No | Copies "Artist - Track" → opens SpotiFLAC (falls back to Spotify if not installed) |
+| Open Spotify | Yes or No | Copies "Artist - Track" → opens Spotify URL (or search URL as fallback) |
+
+---
+
+## Bugs and feature requests
+
+Found a bug or have an idea? Please [open a GitHub Issue](../../issues) — include your Android version, the DJ Friend version from the APK filename, and a description of what happened or what you'd like to see.
+
+---
+
+## Known limitations
+
+- **Spotify longpress paste** — when "Open Spotify" is selected, DJ Friend copies "Artist - Track" to the clipboard and opens a Spotify URL. Spotify's in-app browser/search field may not support longpress-to-paste on some devices; use your keyboard's clipboard button instead. This is a Spotify UI limitation, not a DJ Friend bug.
+
+---
+
+## Contributing
+
+New to contributing on GitHub? See [GitHub's guide to contributing to a project](https://docs.github.com/en/get-started/exploring-projects-on-github/contributing-to-a-project) for a walkthrough of forking, branching, and opening a pull request.
+
+### Requirements
 
 - Android 9 (API 28) or higher
 - A free [Last.fm API key](https://www.last.fm/api/account/create)
 - Notification listener permission (granted once in Settings)
 - [SpotiFLAC](https://github.com/zarzet/SpotiFLAC-Mobile/releases) and/or [Spotify](https://play.google.com/store/apps/details?id=com.spotify.music) installed (optional, to preview songs not in your local music library)
 
----
+### Building
 
-## Building
-
-### Prerequisites
+#### Prerequisites
 
 - JDK 17
 - Android SDK (compile SDK 35)
 - A signing keystore (see below)
 
-### Local build
+#### Local build
 
 1. Clone the repo:
    ```bash
@@ -72,7 +139,7 @@ DJ Friend runs quietly in the background as a foreground service. When it detect
      -Pandroid.injected.signing.key.password=YOUR_KEY_PASS
    ```
 
-### CI — GitHub Actions
+#### CI — GitHub Actions
 
 Four workflows are available under the **Actions** tab, all triggered manually (`workflow_dispatch`):
 
@@ -96,51 +163,6 @@ Version numbers are determined automatically by reading existing git tags — no
 | `LASTFM_API_KEY` | Your Last.fm API key |
 
 > See `SETUP_GUIDE.html` for step-by-step instructions on generating a keystore in Termux and adding secrets to GitHub.
-
----
-
-## First-time setup on device
-
-A welcome screen is shown on first launch with these same instructions.
-
-After installing the APK:
-
-1. Open **DJ Friend** and work through the Settings buttons:
-   - **Allow Notifications** — lets DJ Friend post its notification
-   - **Grant Music Access** — lets DJ Friend check suggestions against your local library
-   - **Grant Notification Listener Access** — required for MediaSession monitoring; opens the system settings page, find DJ Friend in the list and enable it
-   - **Disable Battery Optimisation** — recommended, prevents Android from killing the service
-2. Optionally install **SpotiFLAC** and/or **Spotify** to preview songs not in your local music library.
-3. Go back to the main screen and tap **Start**.
-4. Play any song in any music app. Suggestions will appear in your notification shade and in the app within a few seconds.
-
----
-
-## In-app suggestion list
-
-The main screen shows:
-
-- **Now Playing: Track by Artist** — tapping opens the active media player app
-- **Suggestion buttons** — each shows the track name, artist, and a ✔ (in your local library) or ✗ (web only) symbol. Local matches are **bold**. Tapping a local match copies it to clipboard. Tapping a web match resolves a real Spotify URL via iTunes + Odesli, then either opens SpotiFLAC (default, with fallback to Spotify if SpotiFLAC is not installed) or Spotify depending on your setting.
-- **Back / More** — paginate through all available candidates when "Songs per page" is set to 5 or 10.
-
----
-
-## Settings reference
-
-| Setting | Options | Default | Description |
-|---------|---------|---------|-------------|
-| When I tap a song in my library | Copy song name / Copy artist - song name | Copy song name | What gets copied to clipboard for local matches |
-| When I tap a song NOT in my library | Open SpotiFLAC / Open Spotify | Open SpotiFLAC | Whether to open SpotiFLAC (with Spotify URL on clipboard, falling back to Spotify if SpotiFLAC is not installed) or open Spotify directly (copies "artist - track" to clipboard) |
-| Songs per page | 5 / 10 / All | All | How many suggestions to show at once in the app |
-
-### Web suggestion behaviour in detail
-
-| Setting | Spotify URL found | Behaviour |
-|---------|-------------------|-----------|
-| Open SpotiFLAC | Yes | Copies Spotify URL → opens SpotiFLAC (falls back to Spotify if not installed) |
-| Open SpotiFLAC | No | Copies "Artist - Track" → opens SpotiFLAC (falls back to Spotify if not installed) |
-| Open Spotify | Yes or No | Copies "Artist - Track" → opens Spotify URL (or search URL as fallback) |
 
 ---
 
@@ -178,7 +200,7 @@ NotificationActionReceiver
 
 SpotifyLinkResolver
   ├── iTunes Search API   itunes.apple.com/search?term=...
-  └── Odesli Links API    api.odesli.co/v1-alpha.1/links?url=...
+  └── Odesli Links API    api.song.link/v1-alpha.1/links?url=...
 ```
 
 ---
@@ -254,12 +276,6 @@ External APIs used (no additional dependencies — plain `HttpURLConnection`):
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | Access active MediaSessions across all apps |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Keep running when screen is off |
 | `RECEIVE_BOOT_COMPLETED` | Auto-start after device reboot |
-
----
-
-## Known limitations
-
-- **Spotify longpress paste** — when "Open Spotify" is selected, DJ Friend copies "Artist - Track" to the clipboard and opens a Spotify URL. Spotify's in-app browser/search field may not support longpress-to-paste on some devices; use your keyboard's clipboard button instead. This is a Spotify UI limitation, not a DJ Friend bug.
 
 ---
 
