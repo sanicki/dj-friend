@@ -28,14 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.djfriend.app.BuildConfig
 import com.djfriend.app.service.DjFriendService
-import com.djfriend.app.util.ApkInstaller
-import com.djfriend.app.util.ReleaseInfo
-import com.djfriend.app.util.UpdateChecker
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 // ─── Data class for UI state broadcast from service ───────────────────────────
@@ -71,112 +64,14 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// ─── Root composable with update check ───────────────────────────────────────
-
 @Composable
 fun DjFriendApp() {
-    val context          = LocalContext.current
-    var showSettings     by remember { mutableStateOf(false) }
-    var pendingRelease   by remember { mutableStateOf<ReleaseInfo?>(null) }
-    var updateChecked    by remember { mutableStateOf(false) }
-    var downloading      by remember { mutableStateOf(false) }
-    var downloadProgress by remember { mutableStateOf(0) }
-    var downloadError    by remember { mutableStateOf("") }
-
-    // Check for update once on first composition
-    LaunchedEffect(Unit) {
-        if (!updateChecked) {
-            updateChecked = true
-            val repo    = BuildConfig.GITHUB_REPO
-            val version = BuildConfig.VERSION_NAME_STRING
-            if (repo.isNotBlank()) {
-                pendingRelease = UpdateChecker.checkForUpdate(repo, version)
-            }
-        }
-    }
-
-    // Show update dialog if a newer release was found
-    pendingRelease?.let { release ->
-        UpdateDialog(
-            currentVersion   = BuildConfig.VERSION_NAME_STRING,
-            availableVersion = release.versionName,
-            downloading      = downloading,
-            progress         = downloadProgress,
-            errorMsg         = downloadError,
-            onUpdate = {
-                downloading   = true
-                downloadError = ""
-                CoroutineScope(Dispatchers.Main).launch {
-                    ApkInstaller.downloadAndInstall(
-                        context        = context,
-                        apkUrl         = release.apkUrl,
-                        tagName        = release.tagName,
-                        onProgress     = { downloadProgress = it },
-                        onInstallReady = { downloading = false; pendingRelease = null },
-                        onError        = { msg -> downloading = false; downloadError = msg }
-                    )
-                }
-            },
-            onSkip = { if (!downloading) pendingRelease = null }
-        )
-    }
-
+    var showSettings by remember { mutableStateOf(false) }
     if (showSettings) {
         SettingsScreen(onBack = { showSettings = false })
     } else {
         MainScreen(onSettings = { showSettings = true })
     }
-}
-
-// ─── Update Dialog ────────────────────────────────────────────────────────────
-
-@Composable
-fun UpdateDialog(
-    currentVersion:   String,
-    availableVersion: String,
-    downloading:      Boolean,
-    progress:         Int,
-    errorMsg:         String,
-    onUpdate:         () -> Unit,
-    onSkip:           () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = { if (!downloading) onSkip() },
-        title = { Text("Update Available") },
-        text  = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("A new version of DJ Friend is available.")
-                Text("Installed:  v$currentVersion")
-                Text("Available:  v$availableVersion")
-                if (downloading) {
-                    Spacer(Modifier.height(4.dp))
-                    Text("Downloading… $progress%",
-                        style = MaterialTheme.typography.bodySmall)
-                    LinearProgressIndicator(
-                        progress = { progress / 100f },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                if (errorMsg.isNotBlank()) {
-                    Text(errorMsg,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { if (!downloading) onUpdate() },
-                enabled = !downloading
-            ) { Text(if (downloading) "Downloading…" else "Update") }
-        },
-        dismissButton = {
-            OutlinedButton(
-                onClick = { if (!downloading) onSkip() },
-                enabled = !downloading
-            ) { Text("Skip") }
-        }
-    )
 }
 
 // ─── Main / Now Playing Screen ────────────────────────────────────────────────
@@ -189,8 +84,8 @@ fun MainScreen(onSettings: () -> Unit) {
         context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
             .getBoolean("service_running", false)
 
-    var isRunning  by remember { mutableStateOf(isServiceRunning()) }
-    var nowPlaying by remember { mutableStateOf(NowPlayingState()) }
+    var isRunning     by remember { mutableStateOf(isServiceRunning()) }
+    var nowPlaying    by remember { mutableStateOf(NowPlayingState()) }
 
     // Listen for state broadcasts from the service
     DisposableEffect(Unit) {
@@ -219,6 +114,7 @@ fun MainScreen(onSettings: () -> Unit) {
     val prefs      = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
     val copyFormat = prefs.getString("copy_format", "song_only") ?: "song_only"
 
+    // Helper to send a page request using the current songs_per_page setting
     fun requestPage(offset: Int) {
         val pageSize = prefs.getInt("songs_per_page", Int.MAX_VALUE).let {
             if (it == Int.MAX_VALUE) 1000 else it
@@ -259,6 +155,7 @@ fun MainScreen(onSettings: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // Start / Stop
                 Button(
                     onClick = {
                         if (isRunning) {
@@ -278,6 +175,7 @@ fun MainScreen(onSettings: () -> Unit) {
                     )
                 ) { Text(if (isRunning) "Stop" else "Start") }
 
+                // Settings
                 OutlinedButton(
                     onClick = onSettings,
                     modifier = Modifier.weight(1f),
@@ -285,7 +183,7 @@ fun MainScreen(onSettings: () -> Unit) {
                 ) { Text("Settings") }
             }
 
-            // Now Playing button
+            // Now Playing button — opens the active media player app
             if (nowPlaying.currentTrack.isNotEmpty()) {
                 Button(
                     onClick = {
@@ -307,20 +205,20 @@ fun MainScreen(onSettings: () -> Unit) {
                 }
             } else if (isRunning) {
                 Button(
-                    onClick  = {},
-                    enabled  = false,
+                    onClick = {},
+                    enabled = false,
                     modifier = Modifier.fillMaxWidth(),
-                    shape    = MaterialTheme.shapes.extraLarge
+                    shape = MaterialTheme.shapes.extraLarge
                 ) { Text("Listening for music...") }
             }
 
-            // Suggestion buttons
+            // Suggestion buttons — up to 10 per page
             if (nowPlaying.suggestions.isNotEmpty()) {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                 Text(
                     "Suggested for you:",
-                    style    = MaterialTheme.typography.labelMedium,
-                    color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.align(Alignment.Start)
                 )
 
@@ -328,19 +226,19 @@ fun MainScreen(onSettings: () -> Unit) {
                     val symbol = if (s.isLocal) DjFriendService.CHECK else DjFriendService.CROSS
                     val label  = "${s.globalIndex + 1}. ${s.track} by ${s.artist} $symbol"
                     OutlinedButton(
-                        onClick  = { handleSuggestionTap(context, s, copyFormat) },
+                        onClick = { handleSuggestionTap(context, s, copyFormat) },
                         modifier = Modifier.fillMaxWidth(),
-                        shape    = MaterialTheme.shapes.extraLarge
+                        shape = MaterialTheme.shapes.extraLarge
                     ) {
                         Text(
                             label,
                             fontWeight = if (s.isLocal) FontWeight.Bold else FontWeight.Normal,
-                            maxLines   = 2
+                            maxLines = 2
                         )
                     }
                 }
 
-                // Back / More row — hidden entirely when showing All songs
+                // Back / More row — hide Back entirely when showing All songs
                 val showingAll = prefs.getInt("songs_per_page", Int.MAX_VALUE) == Int.MAX_VALUE
                 if (!showingAll || nowPlaying.canGoMore) {
                     Row(
@@ -354,11 +252,12 @@ fun MainScreen(onSettings: () -> Unit) {
                                         .coerceAtLeast(0)
                                     requestPage(newOffset)
                                 },
-                                enabled  = nowPlaying.canGoBack,
+                                enabled = nowPlaying.canGoBack,
                                 modifier = Modifier.weight(1f),
-                                shape    = MaterialTheme.shapes.extraLarge
+                                shape = MaterialTheme.shapes.extraLarge
                             ) { Text("◀ Back") }
                         }
+
                         if (nowPlaying.canGoMore) {
                             Button(
                                 onClick = {
@@ -366,7 +265,7 @@ fun MainScreen(onSettings: () -> Unit) {
                                     requestPage(newOffset)
                                 },
                                 modifier = Modifier.weight(1f),
-                                shape    = MaterialTheme.shapes.extraLarge
+                                shape = MaterialTheme.shapes.extraLarge
                             ) { Text("More ▶") }
                         } else if (!showingAll) {
                             Spacer(Modifier.weight(1f))
@@ -433,17 +332,17 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     val prefs = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
 
-    var hasListenerAccess    by remember { mutableStateOf(hasNotificationListenerAccess()) }
-    var hasNotifPermission   by remember { mutableStateOf(hasPostNotificationPermission()) }
-    var hasMusicAccess       by remember { mutableStateOf(hasMusicPermission()) }
-    var spotifyInstalled     by remember { mutableStateOf(isSpotifyInstalled()) }
-    var spotiflacInstalled   by remember { mutableStateOf(isSpotiflacInstalled()) }
+    var hasListenerAccess  by remember { mutableStateOf(hasNotificationListenerAccess()) }
+    var hasNotifPermission by remember { mutableStateOf(hasPostNotificationPermission()) }
+    var hasMusicAccess     by remember { mutableStateOf(hasMusicPermission()) }
+    var spotifyInstalled   by remember { mutableStateOf(isSpotifyInstalled()) }
+    var spotiflacInstalled by remember { mutableStateOf(isSpotiflacInstalled()) }
     var copyFormat           by remember { mutableStateOf(prefs.getString("copy_format", "song_only") ?: "song_only") }
-    var songsPerPage         by remember { mutableStateOf(prefs.getInt("songs_per_page", Int.MAX_VALUE)) }
-    var webAction            by remember { mutableStateOf(prefs.getString("web_action", "spotiflac") ?: "spotiflac") }
-    var copyDropdownExpanded by remember { mutableStateOf(false) }
-    var webActionExpanded    by remember { mutableStateOf(false) }
-    var pageDropdownExpanded by remember { mutableStateOf(false) }
+    var songsPerPage          by remember { mutableStateOf(prefs.getInt("songs_per_page", Int.MAX_VALUE)) }
+    var webAction             by remember { mutableStateOf(prefs.getString("web_action", "spotiflac") ?: "spotiflac") }
+    var copyDropdownExpanded  by remember { mutableStateOf(false) }
+    var webActionExpanded     by remember { mutableStateOf(false) }
+    var pageDropdownExpanded  by remember { mutableStateOf(false) }
 
     val copyFormatOptions = listOf(
         "song_only"   to "Copy song name",
@@ -491,26 +390,26 @@ fun SettingsScreen(onBack: () -> Unit) {
             Text("Settings", style = MaterialTheme.typography.headlineLarge)
             Spacer(Modifier.height(4.dp))
 
-            // When I tap a song in my library
+            // Copy format
             Text(
                 "When I tap a song in my music library:",
-                style    = MaterialTheme.typography.labelMedium,
-                color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.Start)
             )
             Box(modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
-                    onClick  = { copyDropdownExpanded = true },
-                    shape    = MaterialTheme.shapes.extraLarge,
+                    onClick = { copyDropdownExpanded = true },
+                    shape = MaterialTheme.shapes.extraLarge,
                     modifier = Modifier.fillMaxWidth()
                 ) { Text(copyFormatOptions.first { it.first == copyFormat }.second) }
                 DropdownMenu(
-                    expanded          = copyDropdownExpanded,
-                    onDismissRequest  = { copyDropdownExpanded = false }
+                    expanded = copyDropdownExpanded,
+                    onDismissRequest = { copyDropdownExpanded = false }
                 ) {
                     copyFormatOptions.forEach { (value, label) ->
                         DropdownMenuItem(
-                            text    = { Text(label) },
+                            text = { Text(label) },
                             onClick = {
                                 copyFormat = value
                                 prefs.edit().putString("copy_format", value).apply()
@@ -521,26 +420,28 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            // When I tap a song NOT in my library
+            // When I tap a song NOT in my music library
             Text(
                 "When I tap a song NOT in my music library:",
-                style    = MaterialTheme.typography.labelMedium,
-                color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.Start)
             )
             Box(modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
-                    onClick  = { webActionExpanded = true },
-                    shape    = MaterialTheme.shapes.extraLarge,
+                    onClick = { webActionExpanded = true },
+                    shape = MaterialTheme.shapes.extraLarge,
                     modifier = Modifier.fillMaxWidth()
-                ) { Text(webActionOptions.first { it.first == webAction }.second) }
+                ) {
+                    Text(webActionOptions.first { it.first == webAction }.second)
+                }
                 DropdownMenu(
-                    expanded         = webActionExpanded,
+                    expanded = webActionExpanded,
                     onDismissRequest = { webActionExpanded = false }
                 ) {
                     webActionOptions.forEach { (value, label) ->
                         DropdownMenuItem(
-                            text    = { Text(label) },
+                            text = { Text(label) },
                             onClick = {
                                 webAction = value
                                 prefs.edit().putString("web_action", value).apply()
@@ -554,23 +455,25 @@ fun SettingsScreen(onBack: () -> Unit) {
             // Songs per page
             Text(
                 "Songs per page:",
-                style    = MaterialTheme.typography.labelMedium,
-                color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.Start)
             )
             Box(modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
-                    onClick  = { pageDropdownExpanded = true },
-                    shape    = MaterialTheme.shapes.extraLarge,
+                    onClick = { pageDropdownExpanded = true },
+                    shape = MaterialTheme.shapes.extraLarge,
                     modifier = Modifier.fillMaxWidth()
-                ) { Text(songsPerPageOptions.first { it.first == songsPerPage }.second) }
+                ) {
+                    Text(songsPerPageOptions.first { it.first == songsPerPage }.second)
+                }
                 DropdownMenu(
-                    expanded         = pageDropdownExpanded,
+                    expanded = pageDropdownExpanded,
                     onDismissRequest = { pageDropdownExpanded = false }
                 ) {
                     songsPerPageOptions.forEach { (value, label) ->
                         DropdownMenuItem(
-                            text    = { Text(label) },
+                            text = { Text(label) },
                             onClick = {
                                 songsPerPage = value
                                 prefs.edit().putInt("songs_per_page", value).apply()
@@ -583,23 +486,23 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             Spacer(Modifier.height(4.dp))
 
-            // Back to main — above the permissions bar
+            // Back to main
             Button(
-                onClick  = onBack,
-                shape    = MaterialTheme.shapes.extraLarge,
+                onClick = onBack,
+                shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Back to DJ Friend") }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
-            // Allow Notifications (Android 13+)
+            // Allow Notifications
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 OutlinedButton(
                     onClick = {
                         if (hasNotifPermission) openAppInfo()
                         else notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     },
-                    shape    = MaterialTheme.shapes.extraLarge,
+                    shape = MaterialTheme.shapes.extraLarge,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
@@ -621,7 +524,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         musicPermLauncher.launch(perm)
                     }
                 },
-                shape    = MaterialTheme.shapes.extraLarge,
+                shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
@@ -633,8 +536,8 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             // Notification Listener
             OutlinedButton(
-                onClick  = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
-                shape    = MaterialTheme.shapes.extraLarge,
+                onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+                shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
@@ -645,7 +548,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            // Battery optimisation
+            // Battery
             OutlinedButton(
                 onClick = {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -656,13 +559,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                         )
                     }
                 },
-                shape    = MaterialTheme.shapes.extraLarge,
+                shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Disable Battery Optimisation") }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
-            // Spotify
+            // Spotify — always opens Play Store
             OutlinedButton(
                 onClick = {
                     context.startActivity(
@@ -671,7 +574,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
                     )
                 },
-                shape    = MaterialTheme.shapes.extraLarge,
+                shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
@@ -681,9 +584,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-            // SpotiFLAC
+            // SpotiFLAC — always opens GitHub releases page
             OutlinedButton(
                 onClick = {
                     context.startActivity(
@@ -692,7 +593,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
                     )
                 },
-                shape    = MaterialTheme.shapes.extraLarge,
+                shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
@@ -726,6 +627,7 @@ private fun handleSuggestionTap(context: Context, s: SuggestionUiItem, copyForma
         cb.setPrimaryClip(android.content.ClipData.newPlainText("DJ Friend", text))
         android.widget.Toast.makeText(context, "Copied: $text", android.widget.Toast.LENGTH_SHORT).show()
     } else {
+        // Delegate to shared resolver — handles iTunes → Odesli → Spotify URL + web_action pref
         com.djfriend.app.receiver.NotificationActionReceiver.handleWebSuggestionTap(
             context, s.artist, s.track
         )
