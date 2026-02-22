@@ -55,7 +55,7 @@ DJ Friend runs quietly in the background as a foreground service. When it detect
    ```properties
    sdk.dir=/path/to/your/android/sdk
    LASTFM_API_KEY=your_lastfm_api_key_here
-   GITHUB_REPO=your-username/dj-friend
+   DJFRIEND_REPO=your-username/dj-friend
    ```
 
 3. Build a debug APK:
@@ -68,7 +68,7 @@ DJ Friend runs quietly in the background as a foreground service. When it detect
    ```bash
    ./gradlew assembleRelease \
      -PLASTFM_API_KEY=your_key \
-     -PGITHUB_REPO=your-username/dj-friend \
+     -PDJFRIEND_REPO=your-username/dj-friend \
      -Pandroid.injected.signing.store.file=/path/to/keystore.jks \
      -Pandroid.injected.signing.store.password=YOUR_STORE_PASS \
      -Pandroid.injected.signing.key.alias=YOUR_ALIAS \
@@ -97,7 +97,7 @@ Version numbers are determined automatically by reading existing git tags — no
 | `SIGNING_KEY_ALIAS` | Key alias inside the keystore |
 | `SIGNING_KEY_PASSWORD` | Key password |
 | `LASTFM_API_KEY` | Your Last.fm API key |
-| `GITHUB_REPO` | Your repo path, e.g. `your-username/dj-friend` (used for self-update checks) |
+| `DJFRIEND_REPO` | Your repo path, e.g. `your-username/dj-friend` (used for self-update checks) |
 
 > See `SETUP_GUIDE.html` for step-by-step instructions on generating a keystore in Termux and adding secrets to GitHub.
 
