@@ -484,6 +484,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
+            // Back to main — above the install bar
+            Button(
+                onClick = onBack,
+                shape = MaterialTheme.shapes.extraLarge,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Back to DJ Friend") }
+
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
             // Allow Notifications
@@ -553,15 +560,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                 shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Disable Battery Optimisation") }
-
-            Spacer(Modifier.height(4.dp))
-
-            // Back to main — above the install bar
-            Button(
-                onClick = onBack,
-                shape = MaterialTheme.shapes.extraLarge,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Back to DJ Friend") }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
