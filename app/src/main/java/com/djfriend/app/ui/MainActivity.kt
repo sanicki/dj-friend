@@ -484,7 +484,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            // Back to main — above the install bar
+            Spacer(Modifier.height(4.dp))
+
+            // Back to main
             Button(
                 onClick = onBack,
                 shape = MaterialTheme.shapes.extraLarge,
@@ -581,8 +583,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                             else                 MaterialTheme.colorScheme.primary
                 )
             }
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
             // SpotiFLAC — always opens GitHub releases page
             OutlinedButton(
