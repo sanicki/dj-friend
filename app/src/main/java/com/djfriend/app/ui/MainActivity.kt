@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -37,13 +38,14 @@ private enum class Screen { WELCOME, MAIN, SETTINGS }
 
 // ─── Data class for UI state broadcast from service ───────────────────────────
 data class NowPlayingState(
-    val currentArtist:  String  = "",
-    val currentTrack:   String  = "",
-    val currentPackage: String  = "",
-    val pageOffset:     Int     = 0,
-    val canGoBack:      Boolean = false,
-    val canGoMore:      Boolean = false,
-    val suggestions:    List<SuggestionUiItem> = emptyList()
+    val currentArtist:      String  = "",
+    val currentTrack:       String  = "",
+    val currentPackage:     String  = "",
+    val currentTrackIsLocal: Boolean = true,   // true = in library (default safe: no web action)
+    val pageOffset:         Int     = 0,
+    val canGoBack:          Boolean = false,
+    val canGoMore:          Boolean = false,
+    val suggestions:        List<SuggestionUiItem> = emptyList()
 )
 
 data class SuggestionUiItem(
@@ -154,6 +156,7 @@ fun WelcomeScreen(onDone: () -> Unit) {
                 number = "4",
                 text   = "Play any song in any music app. Suggestions will appear in your notification shade and in the app within a few seconds."
             )
+            SetupDetail("The Now Playing button shows the current track. If it's in your local library it opens your player; if not, it turns reddish and taps like a web suggestion — finding a Spotify link via your preferred setting.")
 
             Spacer(Modifier.height(8.dp))
 
@@ -327,21 +330,55 @@ fun MainScreen(
             }
 
             if (nowPlaying.currentTrack.isNotEmpty()) {
+                // Faded maroon = error color at low alpha for the container, when not in library.
+                // We blend with the surface color manually so it reads as a muted tint rather
+                // than a near-transparent overlay (which would look washed out on light themes).
+                val nowPlayingContainerColor = if (nowPlaying.currentTrackIsLocal) {
+                    MaterialTheme.colorScheme.secondaryContainer
+                } else {
+                    // Mix error color at ~30% over the surface to produce a faded maroon
+                    val errorColor   = MaterialTheme.colorScheme.error
+                    val surfaceColor = MaterialTheme.colorScheme.surface
+                    Color(
+                        red   = surfaceColor.red   * 0.70f + errorColor.red   * 0.30f,
+                        green = surfaceColor.green * 0.70f + errorColor.green * 0.30f,
+                        blue  = surfaceColor.blue  * 0.70f + errorColor.blue  * 0.30f,
+                        alpha = 1f
+                    )
+                }
+                val nowPlayingContentColor = if (nowPlaying.currentTrackIsLocal) {
+                    MaterialTheme.colorScheme.onSecondaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                }
+                val nowPlayingSymbol = if (nowPlaying.currentTrackIsLocal) "" else " ${DjFriendService.CROSS}"
+
                 Button(
                     onClick = {
-                        val launchIntent = context.packageManager
-                            .getLaunchIntentForPackage(nowPlaying.currentPackage)
-                        if (launchIntent != null) context.startActivity(launchIntent)
+                        if (nowPlaying.currentTrackIsLocal) {
+                            // In library: open the active player app
+                            val launchIntent = context.packageManager
+                                .getLaunchIntentForPackage(nowPlaying.currentPackage)
+                            if (launchIntent != null) context.startActivity(launchIntent)
+                        } else {
+                            // Not in library: resolve Spotify URL just like a web suggestion
+                            com.djfriend.app.receiver.NotificationActionReceiver
+                                .handleWebSuggestionTap(
+                                    context,
+                                    nowPlaying.currentArtist,
+                                    nowPlaying.currentTrack
+                                )
+                        }
                     },
                     modifier = Modifier.fillMaxWidth(),
                     shape = MaterialTheme.shapes.extraLarge,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor   = MaterialTheme.colorScheme.onSecondaryContainer
+                        containerColor = nowPlayingContainerColor,
+                        contentColor   = nowPlayingContentColor
                     )
                 ) {
                     Text(
-                        "Now Playing: ${nowPlaying.currentTrack} by ${nowPlaying.currentArtist}",
+                        "Now Playing: ${nowPlaying.currentTrack} by ${nowPlaying.currentArtist}$nowPlayingSymbol",
                         maxLines = 2
                     )
                 }
@@ -789,13 +826,14 @@ private fun parseStateJson(json: String): NowPlayingState {
             )
         }
         NowPlayingState(
-            currentArtist  = obj.getString("currentArtist"),
-            currentTrack   = obj.getString("currentTrack"),
-            currentPackage = obj.getString("currentPackage"),
-            pageOffset     = obj.getInt("pageOffset"),
-            canGoBack      = obj.getBoolean("canGoBack"),
-            canGoMore      = obj.getBoolean("canGoMore"),
-            suggestions    = suggestions
+            currentArtist       = obj.getString("currentArtist"),
+            currentTrack        = obj.getString("currentTrack"),
+            currentPackage      = obj.getString("currentPackage"),
+            currentTrackIsLocal = obj.optBoolean("currentTrackLocal", true),
+            pageOffset          = obj.getInt("pageOffset"),
+            canGoBack           = obj.getBoolean("canGoBack"),
+            canGoMore           = obj.getBoolean("canGoMore"),
+            suggestions         = suggestions
         )
     } catch (e: Exception) { NowPlayingState() }
 }
