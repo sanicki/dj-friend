@@ -319,7 +319,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     }
 
     fun isSpotiflacInstalled(): Boolean = try {
-        context.packageManager.getApplicationInfo("com.spotiflac.android", 0)
+        context.packageManager.getApplicationInfo("com.zarz.spotiflac", 0)
         true
     } catch (e: PackageManager.NameNotFoundException) { false }
 
