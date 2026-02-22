@@ -31,7 +31,7 @@ object SpotifyLinkResolver {
             results.getJSONObject(0).getString("trackViewUrl")
         } catch (e: Exception) { null }
     }
-    
+
     private fun fetchSpotifyUrl(itunesUrl: String): String? {
         return try {
             val encoded = URLEncoder.encode(itunesUrl, "UTF-8")
@@ -50,7 +50,7 @@ object SpotifyLinkResolver {
                 ?.takeIf { it.isNotBlank() }
         } catch (e: Exception) { null }
     }
-    
+
     /** URL.readText() helper to avoid needing okhttp just for a simple GET */
     private fun URL.readText(): String {
         val conn = openConnection() as HttpURLConnection
