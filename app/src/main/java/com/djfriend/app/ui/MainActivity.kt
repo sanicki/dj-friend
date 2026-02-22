@@ -662,27 +662,6 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
-            // Spotify
-            OutlinedButton(
-                onClick = {
-                    context.startActivity(
-                        Intent(Intent.ACTION_VIEW,
-                            Uri.parse("https://play.google.com/store/apps/details?id=com.spotify.music")
-                        ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                    )
-                },
-                shape    = MaterialTheme.shapes.extraLarge,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    if (spotifyInstalled) "Spotify Installed" else "Install Spotify",
-                    color = if (spotifyInstalled) MaterialTheme.colorScheme.tertiary
-                            else                 MaterialTheme.colorScheme.primary
-                )
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
             // SpotiFLAC
             OutlinedButton(
                 onClick = {
@@ -702,7 +681,24 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            // Spotify
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW,
+                            Uri.parse("https://play.google.com/store/apps/details?id=com.spotify.music")
+                        ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                    )
+                },
+                shape    = MaterialTheme.shapes.extraLarge,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (spotifyInstalled) "Spotify Installed" else "Install Spotify",
+                    color = if (spotifyInstalled) MaterialTheme.colorScheme.tertiary
+                            else                 MaterialTheme.colorScheme.primary
+                )
+            }
 
             Text(
                 "Powered by Last.fm",
