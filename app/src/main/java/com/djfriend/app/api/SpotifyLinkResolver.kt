@@ -10,66 +10,80 @@ import java.net.URLEncoder
 
 /**
  * Resolves a canonical Spotify track URL for a given artist + track name using:
- *   1. MusicBrainz recording search  → get the best-matching recording MBID
+ *   1. MusicBrainz recording search  → get up to 5 candidate MBIDs
  *   2. MusicBrainz recording lookup  → get url-rels, extract the Spotify URL
+ *      (repeated for each candidate in order until a Spotify URL is found)
  *
- * No API key required. Rate limit: ≤ 1 request/second (enforced by a coroutine
- * delay between the two calls). Free for non-commercial use.
+ * No API key required. Rate limit: ≤ 1 request/second, honoured by a coroutine
+ * delay between each network call. Free for non-commercial use.
  *
- * Returns null if no Spotify URL is found in MusicBrainz for this recording,
- * in which case callers should fall back to copying "artist - track" instead.
+ * Returns null if no Spotify URL is found across all candidates, in which case
+ * callers should fall back to copying "artist - track" to clipboard instead.
  */
 object SpotifyLinkResolver {
 
     private const val BASE_URL   = "https://musicbrainz.org/ws/2"
     private const val USER_AGENT = "DJFriend/1.0 ( https://github.com/sanicki/dj-friend )"
 
-    // MusicBrainz can respond slowly, especially on cold requests or under load.
-    // 20 s gives enough headroom without leaving the user waiting indefinitely.
+    // MusicBrainz can be slow on cold requests; 20 s gives enough headroom.
     private const val TIMEOUT_MS = 20_000
 
     suspend fun resolve(artist: String, track: String): String? {
-        val mbid = withContext(Dispatchers.IO) { findRecordingMbid(artist, track) }
-            ?: return null
-        // Honour MusicBrainz's ≤ 1 req/s policy between the two calls.
-        // delay() suspends the coroutine without blocking any thread.
-        delay(1_000)
-        return withContext(Dispatchers.IO) { fetchSpotifyUrlForMbid(mbid) }
+        // Step 1: search for candidate recording MBIDs
+        val mbids = withContext(Dispatchers.IO) { findRecordingMbids(artist, track) }
+        if (mbids.isEmpty()) return null
+
+        // Step 2: look up each candidate in order until we find a Spotify URL.
+        // Each lookup is preceded by a 1 s delay to honour MusicBrainz rate policy.
+        for (mbid in mbids) {
+            delay(1_000)
+            val spotifyUrl = withContext(Dispatchers.IO) { fetchSpotifyUrlForMbid(mbid) }
+            if (spotifyUrl != null) return spotifyUrl
+        }
+        return null
     }
 
     /**
-     * Step 1 — search for a recording matching the artist + track name.
-     * Returns the MBID of the top-scored result, or null if nothing found.
-     *
-     * limit=5 gives us a small buffer in case the first result lacks URL rels,
-     * but we only use the top result here since MusicBrainz sorts by relevance
-     * and the lookup either has a Spotify URL or it doesn't.
+     * Step 1 — search recordings and return the MBIDs of the top matches.
+     * We fetch up to 5 and try them all in step 2, since the top result
+     * may be a recording that has no Spotify URL linked yet in MusicBrainz.
      */
-    private fun findRecordingMbid(artist: String, track: String): String? {
+    private fun findRecordingMbids(artist: String, track: String): List<String> {
         return try {
             val query = URLEncoder.encode(
                 "recording:\"${track.replace("\"", "")}\" AND artist:\"${artist.replace("\"", "")}\"",
                 "UTF-8"
             )
             val json       = fetch(URL("$BASE_URL/recording?query=$query&limit=5&fmt=json"))
-            val recordings = json.optJSONArray("recordings") ?: return null
-            if (recordings.length() == 0) return null
-            recordings.getJSONObject(0).optString("id").takeIf { it.isNotBlank() }
-        } catch (e: Exception) { null }
+            val recordings = json.optJSONArray("recordings") ?: return emptyList()
+            (0 until recordings.length())
+                .mapNotNull { i ->
+                    recordings.getJSONObject(i).optString("id").takeIf { it.isNotBlank() }
+                }
+        } catch (e: Exception) { emptyList() }
     }
 
     /**
-     * Step 2 — look up the recording by MBID with url-rels included.
-     * Scans the returned relations for a Spotify track URL.
+     * Step 2 — look up a recording by MBID with url-rels.
+     *
+     * MusicBrainz url-rels JSON shape:
+     *   { "relations": [ { "url": { "resource": "https://open.spotify.com/track/..." } }, ... ] }
+     *
+     * We do NOT filter by "target-type" — its presence and exact value varies
+     * across MusicBrainz API responses and it is not reliably set on url-rels.
+     * Filtering on it causes every relation to be silently skipped, which is
+     * why resolve() was returning null immediately without any network failure.
+     * Instead we check every relation's url.resource directly.
      */
     private fun fetchSpotifyUrlForMbid(mbid: String): String? {
         return try {
             val json      = fetch(URL("$BASE_URL/recording/$mbid?inc=url-rels&fmt=json"))
             val relations = json.optJSONArray("relations") ?: return null
             for (i in 0 until relations.length()) {
-                val rel = relations.getJSONObject(i)
-                if (rel.optString("target-type") != "url") continue
-                val href = rel.optJSONObject("url")?.optString("resource") ?: continue
+                val href = relations.getJSONObject(i)
+                    .optJSONObject("url")
+                    ?.optString("resource")
+                    ?: continue
                 if (href.startsWith("https://open.spotify.com/track/")) return href
             }
             null
