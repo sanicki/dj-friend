@@ -30,15 +30,14 @@ class NotificationActionReceiver : BroadcastReceiver() {
          *                 if URL not found: copy "artist - track", open SpotiFLAC (fallback to Spotify).
          *   "spotify"   → copy "artist - track", open Spotify URL (or search URL as fallback).
          *
-         * Resolution uses MusicBrainz (two sequential requests + 1 s inter-request delay per
-         * MusicBrainz policy). A further brief delay is inserted before launching any external
-         * app so the "Copied:" Toast has time to render before the foreground changes.
+         * A brief delay is inserted before launching any external app so the "Copied:" Toast
+         * has time to render before the foreground changes.
          */
         fun handleWebSuggestionTap(context: Context, artist: String, track: String) {
             val prefs     = context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
             val webAction = prefs.getString("web_action", "spotiflac") ?: "spotiflac"
 
-            Toast.makeText(context, "Finding Spotify link…", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "Finding link…", Toast.LENGTH_SHORT).show()
 
             CoroutineScope(Dispatchers.Main).launch {
                 val spotifyUrl = SpotifyLinkResolver.resolve(artist, track)
