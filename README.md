@@ -21,7 +21,9 @@ DJ Friend runs quietly in the background as a foreground service. When it detect
 
 ## Screenshots
 
-> _Add screenshots here once the app is built._
+| Main screen | Settings | Notification |
+|:-----------:|:--------:|:------------:|
+| ![Main screen showing Now Playing and suggestions](screenshots/screenshot_main.jpg) | ![Settings screen](screenshots/screenshot_settings.jpg) | ![Notification with three suggestion action buttons](screenshots/screenshot_notification.jpg) |
 
 ---
 
@@ -87,7 +89,6 @@ Found a bug or have an idea? Please [open a GitHub Issue](../../issues) — incl
 ## Known limitations
 
 - **Spotify longpress paste** — when "Open Spotify" is selected, DJ Friend copies "Artist - Track" to the clipboard and opens a Spotify URL. Spotify's in-app browser/search field may not support longpress-to-paste on some devices; use your keyboard's clipboard button instead. This is a Spotify UI limitation, not a DJ Friend bug.
-- **MusicBrainz coverage** — MusicBrainz may not have a Spotify URL on file for every track, particularly for obscure releases. When no URL is found, DJ Friend falls back to copying "Artist - Track" to the clipboard instead.
 
 ---
 
@@ -196,12 +197,12 @@ DjFriendService  (ForegroundService) ◄──────── starts/stops �
 
 NotificationActionReceiver
   ├── Local tap  → clipboard copy
-  └── Web tap    → SpotifyLinkResolver (MusicBrainz search + lookup → Spotify URL)
+  └── Web tap    → SpotifyLinkResolver (iTunes → Odesli → Spotify URL)
                         └── open SpotiFLAC (fallback: Spotify) or Spotify per setting
 
 SpotifyLinkResolver
-  ├── MusicBrainz Search  musicbrainz.org/ws/2/recording?query=...
-  └── MusicBrainz Lookup  musicbrainz.org/ws/2/recording/<mbid>?inc=url-rels
+  ├── iTunes Search API   itunes.apple.com/search?term=...
+  └── Odesli Links API    api.song.link/v1-alpha.1/links?url=...
 ```
 
 ---
@@ -228,7 +229,7 @@ app/src/main/
 │   ├── DjFriendApp.kt
 │   ├── api/
 │   │   ├── LastFmApiService.kt         Retrofit interface + response models
-│   │   └── SpotifyLinkResolver.kt      MusicBrainz → canonical Spotify URL
+│   │   └── SpotifyLinkResolver.kt      iTunes → Odesli → Spotify URL chain
 │   ├── model/
 │   │   └── SuggestionResult.kt
 │   ├── receiver/
@@ -259,7 +260,8 @@ app/src/main/
 | AndroidX Core KTX | Kotlin extensions |
 
 External APIs used (no additional dependencies — plain `HttpURLConnection`):
-- MusicBrainz API — recording search + Spotify URL lookup (free, no key required, 1 req/s limit)
+- iTunes Search API (Apple) — track lookup
+- Odesli Links API — cross-platform streaming URL resolution
 - GitHub Releases API — self-update version check
 
 ---
@@ -282,8 +284,6 @@ External APIs used (no additional dependencies — plain `HttpURLConnection`):
 ## Attribution
 
 Powered by [Last.fm](https://www.last.fm/api).
-
-Track links resolved via [MusicBrainz](https://musicbrainz.org/doc/MusicBrainz_API).
 
 ---
 
