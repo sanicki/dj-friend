@@ -299,6 +299,25 @@ fun MainScreen(
             Spacer(Modifier.height(16.dp))
             Text("DJ Friend", style = MaterialTheme.typography.headlineLarge)
 
+            val versionName = remember {
+                try {
+                    val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        context.packageManager.getPackageInfo(
+                            context.packageName, PackageManager.PackageInfoFlags.of(0)
+                        )
+                    } else {
+                        @Suppress("DEPRECATION")
+                        context.packageManager.getPackageInfo(context.packageName, 0)
+                    }
+                    "v${info.versionName}"
+                } catch (e: Exception) { "v0.0.0" }
+            }
+            Text(
+                versionName,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
