@@ -338,7 +338,7 @@ class DjFriendService : Service() {
             // Check if the now-playing track itself is in the local library
             currentTrackIsLocal = findLocalTrack(artist, track) != null
             withContext(Dispatchers.Main) {
-                updateNotification("Suggested for you:", allCandidates.take(3), 0)
+                updateNotification("Suggested for you:", applyFilter(allCandidates, "notif_filter").take(3), 0)
                 broadcastStateUpdate(0)
             }
         }
@@ -394,10 +394,23 @@ class DjFriendService : Service() {
         return if (stored == Int.MAX_VALUE) Int.MAX_VALUE else stored
     }
 
+    /** Applies a suggestion filter pref value to a list of candidates. */
+    private fun applyFilter(candidates: List<SuggestionResult>, filterKey: String): List<SuggestionResult> {
+        val prefs  = getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
+        return when (prefs.getString(filterKey, "all")) {
+            "local_only" -> candidates.filter { it.isLocal }
+            "web_only"   -> candidates.filter { !it.isLocal }
+            else         -> candidates   // "all"
+        }
+    }
+
     fun broadcastStateUpdate(pageOffset: Int, pageSize: Int = prefPageSize()) {
-        val page      = allCandidates.drop(pageOffset).take(pageSize)
+        // Apply the in-app filter independently of the notification filter.
+        // Pagination operates on the filtered list so Back/More stay consistent.
+        val filtered  = applyFilter(allCandidates, "app_filter")
+        val page      = filtered.drop(pageOffset).take(pageSize)
         val canGoBack = pageOffset > 0
-        val canGoMore = (pageOffset + pageSize) < allCandidates.size
+        val canGoMore = (pageOffset + pageSize) < filtered.size
 
         val suggestionsJson = JSONArray().apply {
             page.forEachIndexed { i, s ->
