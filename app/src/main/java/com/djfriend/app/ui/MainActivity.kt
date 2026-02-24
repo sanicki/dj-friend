@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import android.app.ActivityManager
 import com.djfriend.app.service.DjFriendService
 import org.json.JSONObject
 
@@ -214,9 +215,14 @@ fun MainScreen(
 ) {
     val context = LocalContext.current
 
-    fun isServiceRunning() =
-        context.getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
-            .getBoolean("service_running", false)
+    @Suppress("DEPRECATION")   // getRunningServices is reliable for checking our own service
+    fun isServiceRunning(): Boolean {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        return am.getRunningServices(Int.MAX_VALUE).any {
+            it.service.packageName == context.packageName &&
+            it.service.className   == DjFriendService::class.java.name
+        }
+    }
 
     var isRunning     by remember { mutableStateOf(isServiceRunning()) }
     var nowPlaying    by remember { mutableStateOf(NowPlayingState()) }
