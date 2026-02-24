@@ -27,6 +27,8 @@ jobs:
           VERSION_NUMBER="${NEXT_MAJOR}.0.0"
           echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
           echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
+          VERSION_CODE=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | wc -l | tr -d ' ')
+          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
           echo "Next major version: $NEW_TAG"
 
       - name: Set up JDK 17
@@ -56,6 +58,7 @@ jobs:
         run: |
           ./gradlew assembleRelease \
             -PversionName="${{ steps.version.outputs.version_number }}" \
+            -PversionCode="${{ steps.version.outputs.version_code }}" \
             -PLASTFM_API_KEY="${{ secrets.LASTFM_API_KEY }}" \
             -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/keystore.jks \
             -Pandroid.injected.signing.store.password=${{ secrets.SIGNING_STORE_PASSWORD }} \
