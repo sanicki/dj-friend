@@ -21,9 +21,7 @@ DJ Friend runs quietly in the background as a foreground service. When it detect
 
 ## Screenshots
 
-| Main screen | Settings | Notification |
-|:-----------:|:--------:|:------------:|
-| ![Main screen showing Now Playing and suggestions](screenshots/screenshot_main.jpg) | ![Settings screen](screenshots/screenshot_settings.jpg) | ![Notification with three suggestion action buttons](screenshots/screenshot_notification.jpg) |
+> _Add screenshots here once the app is built._
 
 ---
 
@@ -64,11 +62,15 @@ The main screen shows:
 
 ## Settings reference
 
+The Settings screen is divided into two sections. The upper portion contains **Settings** — preferences that control DJ Friend's behaviour. Below the "Back to DJ Friend" button is **Configuration** — permission grants and app install buttons needed for initial setup.
+
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
 | When I tap a song in my library | Copy song name / Copy artist - song name | Copy song name | What gets copied to clipboard for local matches |
 | When I tap a song NOT in my library | Open SpotiFLAC / Open Spotify | Open SpotiFLAC | Whether to open SpotiFLAC (with Spotify URL on clipboard, falling back to Spotify if SpotiFLAC is not installed) or open Spotify directly (copies "artist - track" to clipboard) |
 | Songs per page | 5 / 10 / All | All | How many suggestions to show at once in the app |
+| Notification suggestions | Show all / Only songs in music library / Only songs NOT in music library | Show all | Filters which suggestions appear as notification action buttons |
+| DJ Friend in-app suggestions | Show all / Only songs in music library / Only songs NOT in music library | Show all | Filters which suggestions appear in the in-app suggestion list |
 
 ### Web suggestion behaviour in detail
 
@@ -89,6 +91,7 @@ Found a bug or have an idea? Please [open a GitHub Issue](../../issues) — incl
 ## Known limitations
 
 - **Spotify longpress paste** — when "Open Spotify" is selected, DJ Friend copies "Artist - Track" to the clipboard and opens a Spotify URL. Spotify's in-app browser/search field may not support longpress-to-paste on some devices; use your keyboard's clipboard button instead. This is a Spotify UI limitation, not a DJ Friend bug.
+- **MusicBrainz coverage** — MusicBrainz may not have a Spotify URL on file for every track, particularly for obscure releases. When no URL is found, DJ Friend falls back to copying "Artist - Track" to the clipboard instead.
 
 ---
 
@@ -164,7 +167,6 @@ Version numbers are determined automatically by reading existing git tags — no
 | `SIGNING_KEY_PASSWORD` | Key password |
 | `LASTFM_API_KEY` | Your Last.fm API key |
 
-> See `SETUP_GUIDE.html` for step-by-step instructions on generating a keystore in Termux and adding secrets to GitHub.
 
 ---
 
@@ -197,12 +199,12 @@ DjFriendService  (ForegroundService) ◄──────── starts/stops �
 
 NotificationActionReceiver
   ├── Local tap  → clipboard copy
-  └── Web tap    → SpotifyLinkResolver (iTunes → Odesli → Spotify URL)
+  └── Web tap    → SpotifyLinkResolver (MusicBrainz search + lookup → Spotify URL)
                         └── open SpotiFLAC (fallback: Spotify) or Spotify per setting
 
 SpotifyLinkResolver
-  ├── iTunes Search API   itunes.apple.com/search?term=...
-  └── Odesli Links API    api.song.link/v1-alpha.1/links?url=...
+  ├── MusicBrainz Search  musicbrainz.org/ws/2/recording?query=...
+  └── MusicBrainz Lookup  musicbrainz.org/ws/2/recording/<mbid>?inc=url-rels
 ```
 
 ---
@@ -229,7 +231,7 @@ app/src/main/
 │   ├── DjFriendApp.kt
 │   ├── api/
 │   │   ├── LastFmApiService.kt         Retrofit interface + response models
-│   │   └── SpotifyLinkResolver.kt      iTunes → Odesli → Spotify URL chain
+│   │   └── SpotifyLinkResolver.kt      MusicBrainz → canonical Spotify URL
 │   ├── model/
 │   │   └── SuggestionResult.kt
 │   ├── receiver/
@@ -260,8 +262,7 @@ app/src/main/
 | AndroidX Core KTX | Kotlin extensions |
 
 External APIs used (no additional dependencies — plain `HttpURLConnection`):
-- iTunes Search API (Apple) — track lookup
-- Odesli Links API — cross-platform streaming URL resolution
+- MusicBrainz API — recording search + Spotify URL lookup (free, no key required, 1 req/s limit)
 - GitHub Releases API — self-update version check
 
 ---
@@ -284,6 +285,8 @@ External APIs used (no additional dependencies — plain `HttpURLConnection`):
 ## Attribution
 
 Powered by [Last.fm](https://www.last.fm/api).
+
+Track links resolved via [MusicBrainz](https://musicbrainz.org/doc/MusicBrainz_API).
 
 ---
 
