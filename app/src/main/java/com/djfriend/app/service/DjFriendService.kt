@@ -338,7 +338,9 @@ class DjFriendService : Service() {
             // Check if the now-playing track itself is in the local library
             currentTrackIsLocal = findLocalTrack(artist, track) != null
             withContext(Dispatchers.Main) {
-                updateNotification("Suggested for you:", applyFilter(allCandidates, "notif_filter").take(3), 0)
+                val notifSuggestions = applyFilter(allCandidates, "notif_filter").take(3)
+                val notifStatus = if (notifSuggestions.isEmpty()) "Now playing" else "Suggested for you:"
+                updateNotification(notifStatus, notifSuggestions, 0)
                 broadcastStateUpdate(0)
             }
         }
