@@ -172,7 +172,6 @@ class DjFriendService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
-            .edit().putBoolean("service_running", true).apply()
         startForeground(NOTIFICATION_ID, buildBaseNotification("Listening for music..."))
         observeMediaSessions()
         return START_STICKY
@@ -188,7 +187,6 @@ class DjFriendService : Service() {
         }
         controllerCallbacks.clear()
         getSharedPreferences("djfriend_prefs", Context.MODE_PRIVATE)
-            .edit().putBoolean("service_running", false).apply()
         sendBroadcast(Intent(ACTION_SERVICE_STOPPED).setPackage(packageName))
         super.onDestroy()
     }
