@@ -657,38 +657,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            // Songs per page
-            Text(
-                "Songs per page:",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.Start)
-            )
-            Box(modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = { pageDropdownExpanded = true },
-                    shape = MaterialTheme.shapes.extraLarge,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(songsPerPageOptions.first { it.first == songsPerPage }.second)
-                }
-                DropdownMenu(
-                    expanded = pageDropdownExpanded,
-                    onDismissRequest = { pageDropdownExpanded = false }
-                ) {
-                    songsPerPageOptions.forEach { (value, label) ->
-                        DropdownMenuItem(
-                            text = { Text(label) },
-                            onClick = {
-                                songsPerPage = value
-                                prefs.edit().putInt("songs_per_page", value).apply()
-                                pageDropdownExpanded = false
-                            }
-                        )
-                    }
-                }
-            }
-
             // In-app suggestions filter
             Text(
                 "DJ Friend in-app suggestions:",
@@ -721,6 +689,38 @@ fun SettingsScreen(onBack: () -> Unit) {
                                         .setPackage(context.packageName)
                                         .putExtra(DjFriendService.EXTRA_PAGE_OFFSET, 0)
                                 )
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Songs per page
+            Text(
+                "Songs per page:",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { pageDropdownExpanded = true },
+                    shape = MaterialTheme.shapes.extraLarge,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(songsPerPageOptions.first { it.first == songsPerPage }.second)
+                }
+                DropdownMenu(
+                    expanded = pageDropdownExpanded,
+                    onDismissRequest = { pageDropdownExpanded = false }
+                ) {
+                    songsPerPageOptions.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                songsPerPage = value
+                                prefs.edit().putInt("songs_per_page", value).apply()
+                                pageDropdownExpanded = false
                             }
                         )
                     }
@@ -778,8 +778,7 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             Text(
                 "Configuration",
-                style = MaterialTheme.typography.headlineLarge,
-                modifier = Modifier.align(Alignment.Start)
+                style = MaterialTheme.typography.headlineLarge
             )
             Spacer(Modifier.height(4.dp))
 
@@ -852,6 +851,12 @@ fun SettingsScreen(onBack: () -> Unit) {
             ) { Text("Disable Battery Optimisation") }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            Text(
+                "Other Apps",
+                style = MaterialTheme.typography.headlineLarge
+            )
+            Spacer(Modifier.height(4.dp))
 
             // SpotiFLAC — listed first, always opens GitHub releases page
             OutlinedButton(
