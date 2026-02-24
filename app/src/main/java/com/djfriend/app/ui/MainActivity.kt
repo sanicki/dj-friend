@@ -554,7 +554,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     )
     val songsPerPageOptions = listOf(5 to "5 songs", 10 to "10 songs", Int.MAX_VALUE to "All songs")
     val suggestionFilterOptions = listOf(
-        "all"        to "Show all",
+        "all"        to "All songs",
         "local_only" to "Only songs in music library",
         "web_only"   to "Only songs NOT in music library"
     )
@@ -689,44 +689,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            // Notification suggestions filter
-            Text(
-                "Notification suggestions:",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.Start)
-            )
-            Box(modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = { notifFilterExpanded = true },
-                    shape = MaterialTheme.shapes.extraLarge,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(suggestionFilterOptions.first { it.first == notifFilter }.second)
-                }
-                DropdownMenu(
-                    expanded = notifFilterExpanded,
-                    onDismissRequest = { notifFilterExpanded = false }
-                ) {
-                    suggestionFilterOptions.forEach { (value, label) ->
-                        DropdownMenuItem(
-                            text = { Text(label) },
-                            onClick = {
-                                notifFilter = value
-                                prefs.edit().putString("notif_filter", value).apply()
-                                notifFilterExpanded = false
-                                // Request a service re-broadcast so the notification updates immediately
-                                context.sendBroadcast(
-                                    Intent(DjFriendService.ACTION_REQUEST_PAGE)
-                                        .setPackage(context.packageName)
-                                        .putExtra(DjFriendService.EXTRA_PAGE_OFFSET, 0)
-                                )
-                            }
-                        )
-                    }
-                }
-            }
-
             // In-app suggestions filter
             Text(
                 "DJ Friend in-app suggestions:",
@@ -754,6 +716,44 @@ fun SettingsScreen(onBack: () -> Unit) {
                                 prefs.edit().putString("app_filter", value).apply()
                                 appFilterExpanded = false
                                 // Request a service re-broadcast so the in-app list updates immediately
+                                context.sendBroadcast(
+                                    Intent(DjFriendService.ACTION_REQUEST_PAGE)
+                                        .setPackage(context.packageName)
+                                        .putExtra(DjFriendService.EXTRA_PAGE_OFFSET, 0)
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Notification suggestions filter
+            Text(
+                "Notification suggestions:",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { notifFilterExpanded = true },
+                    shape = MaterialTheme.shapes.extraLarge,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(suggestionFilterOptions.first { it.first == notifFilter }.second)
+                }
+                DropdownMenu(
+                    expanded = notifFilterExpanded,
+                    onDismissRequest = { notifFilterExpanded = false }
+                ) {
+                    suggestionFilterOptions.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                notifFilter = value
+                                prefs.edit().putString("notif_filter", value).apply()
+                                notifFilterExpanded = false
+                                // Request a service re-broadcast so the notification updates immediately
                                 context.sendBroadcast(
                                     Intent(DjFriendService.ACTION_REQUEST_PAGE)
                                         .setPackage(context.packageName)
