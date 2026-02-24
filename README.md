@@ -69,8 +69,8 @@ The Settings screen is divided into two sections. The upper portion contains **S
 | When I tap a song in my library | Copy song name / Copy artist - song name | Copy song name | What gets copied to clipboard for local matches |
 | When I tap a song NOT in my library | Open SpotiFLAC / Open Spotify | Open SpotiFLAC | Whether to open SpotiFLAC (with Spotify URL on clipboard, falling back to Spotify if SpotiFLAC is not installed) or open Spotify directly (copies "artist - track" to clipboard) |
 | Songs per page | 5 / 10 / All | All | How many suggestions to show at once in the app |
-| Notification suggestions | Show all / Only songs in music library / Only songs NOT in music library | Show all | Filters which suggestions appear as notification action buttons |
-| DJ Friend in-app suggestions | Show all / Only songs in music library / Only songs NOT in music library | Show all | Filters which suggestions appear in the in-app suggestion list |
+| DJ Friend in-app suggestions | All songs / Only songs in music library / Only songs NOT in music library | All songs | Filters which suggestions appear in the in-app suggestion list |
+| Notification suggestions | All songs / Only songs in music library / Only songs NOT in music library | All songs | Filters which suggestions appear as notification action buttons |
 
 ### Web suggestion behaviour in detail
 
