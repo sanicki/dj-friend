@@ -339,7 +339,7 @@ class DjFriendService : Service() {
             currentTrackIsLocal = findLocalTrack(artist, track) != null
             withContext(Dispatchers.Main) {
                 val notifSuggestions = applyFilter(allCandidates, "notif_filter").take(3)
-                val notifStatus = if (notifSuggestions.isEmpty()) "Now playing" else "Suggested for you:"
+                val notifStatus = if (notifSuggestions.isEmpty()) "" else "Suggested for you:"
                 updateNotification(notifStatus, notifSuggestions, 0)
                 broadcastStateUpdate(0)
             }
