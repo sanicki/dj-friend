@@ -13,7 +13,7 @@ android {
         minSdk 28
         targetSdk 35
         versionCode 1
-        versionName "1.0.0"
+        versionName "0.0.0"
 
         // API key: passed as -PLASTFM_API_KEY=xxx on the Gradle command line (CI),
         // or defined in local.properties for local dev builds.
