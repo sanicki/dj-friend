@@ -134,7 +134,7 @@ fun WelcomeScreen(onDone: () -> Unit) {
 
             SetupStep(
                 number = "1",
-                text   = "Open Settings and work through the permission buttons:"
+                text   = "Open Settings and work through the permission buttons in the Configuration section:"
             )
             SetupDetail("Allow Notifications — lets DJ Friend post its notification")
             SetupDetail("Grant Music Access — lets DJ Friend check suggestions against your local library")
@@ -517,9 +517,13 @@ fun SettingsScreen(onBack: () -> Unit) {
     var copyFormat           by remember { mutableStateOf(prefs.getString("copy_format", "song_only") ?: "song_only") }
     var songsPerPage          by remember { mutableStateOf(prefs.getInt("songs_per_page", Int.MAX_VALUE)) }
     var webAction             by remember { mutableStateOf(prefs.getString("web_action", "spotiflac") ?: "spotiflac") }
-    var copyDropdownExpanded  by remember { mutableStateOf(false) }
-    var webActionExpanded     by remember { mutableStateOf(false) }
-    var pageDropdownExpanded  by remember { mutableStateOf(false) }
+    var notifFilter           by remember { mutableStateOf(prefs.getString("notif_filter", "all") ?: "all") }
+    var appFilter             by remember { mutableStateOf(prefs.getString("app_filter",   "all") ?: "all") }
+    var copyDropdownExpanded      by remember { mutableStateOf(false) }
+    var webActionExpanded         by remember { mutableStateOf(false) }
+    var pageDropdownExpanded      by remember { mutableStateOf(false) }
+    var notifFilterExpanded       by remember { mutableStateOf(false) }
+    var appFilterExpanded         by remember { mutableStateOf(false) }
 
     val copyFormatOptions = listOf(
         "song_only"   to "Copy song name",
@@ -530,6 +534,11 @@ fun SettingsScreen(onBack: () -> Unit) {
         "spotify"   to "Open Spotify"
     )
     val songsPerPageOptions = listOf(5 to "5 songs", 10 to "10 songs", Int.MAX_VALUE to "All songs")
+    val suggestionFilterOptions = listOf(
+        "all"        to "Show all",
+        "local_only" to "Only songs in music library",
+        "web_only"   to "Only songs NOT in music library"
+    )
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -661,6 +670,82 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
+            // Notification suggestions filter
+            Text(
+                "Notification suggestions:",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { notifFilterExpanded = true },
+                    shape = MaterialTheme.shapes.extraLarge,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(suggestionFilterOptions.first { it.first == notifFilter }.second)
+                }
+                DropdownMenu(
+                    expanded = notifFilterExpanded,
+                    onDismissRequest = { notifFilterExpanded = false }
+                ) {
+                    suggestionFilterOptions.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                notifFilter = value
+                                prefs.edit().putString("notif_filter", value).apply()
+                                notifFilterExpanded = false
+                                // Request a service re-broadcast so the notification updates immediately
+                                context.sendBroadcast(
+                                    Intent(DjFriendService.ACTION_REQUEST_PAGE)
+                                        .setPackage(context.packageName)
+                                        .putExtra(DjFriendService.EXTRA_PAGE_OFFSET, 0)
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+
+            // In-app suggestions filter
+            Text(
+                "DJ Friend in-app suggestions:",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { appFilterExpanded = true },
+                    shape = MaterialTheme.shapes.extraLarge,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(suggestionFilterOptions.first { it.first == appFilter }.second)
+                }
+                DropdownMenu(
+                    expanded = appFilterExpanded,
+                    onDismissRequest = { appFilterExpanded = false }
+                ) {
+                    suggestionFilterOptions.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                appFilter = value
+                                prefs.edit().putString("app_filter", value).apply()
+                                appFilterExpanded = false
+                                // Request a service re-broadcast so the in-app list updates immediately
+                                context.sendBroadcast(
+                                    Intent(DjFriendService.ACTION_REQUEST_PAGE)
+                                        .setPackage(context.packageName)
+                                        .putExtra(DjFriendService.EXTRA_PAGE_OFFSET, 0)
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+
             Spacer(Modifier.height(4.dp))
 
             // Back to main
@@ -671,6 +756,13 @@ fun SettingsScreen(onBack: () -> Unit) {
             ) { Text("Back to DJ Friend") }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            Text(
+                "Configuration",
+                style = MaterialTheme.typography.headlineLarge,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Spacer(Modifier.height(4.dp))
 
             // Allow Notifications
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
