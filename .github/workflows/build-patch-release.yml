@@ -26,9 +26,7 @@ jobs:
           PATCH=$(echo "$LATEST" | sed 's/v//' | cut -d. -f3)
           NEXT_PATCH=$((PATCH + 1))
           NEW_TAG="v${MAJOR}.${MINOR}.${NEXT_PATCH}"
-          VERSION_NUMBER="${MAJOR}.${MINOR}.${NEXT_PATCH}"
           echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
-          echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
           echo "Next patch version: $NEW_TAG"
 
       - name: Set up JDK 17
@@ -57,7 +55,6 @@ jobs:
       - name: Build signed APK
         run: |
           ./gradlew assembleRelease \
-            -PversionName="${{ steps.version.outputs.version_number }}" \
             -PLASTFM_API_KEY="${{ secrets.LASTFM_API_KEY }}" \
             -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/keystore.jks \
             -Pandroid.injected.signing.store.password=${{ secrets.SIGNING_STORE_PASSWORD }} \
