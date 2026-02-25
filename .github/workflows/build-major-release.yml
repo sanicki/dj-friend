@@ -18,15 +18,14 @@ jobs:
       - name: Calculate next major version
         id: version
         run: |
+          # Find the highest vX.Y.Z tag; default to v0.0.0 if none exist
           LATEST=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
             | sort -t. -k1,1V -k2,2n -k3,3n | tail -1)
           if [ -z "$LATEST" ]; then LATEST="v0.0.0"; fi
           MAJOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f1)
           NEXT_MAJOR=$((MAJOR + 1))
           NEW_TAG="v${NEXT_MAJOR}.0.0"
-          VERSION_NUMBER="${NEXT_MAJOR}.0.0"
           echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
-          echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
           echo "Next major version: $NEW_TAG"
 
       - name: Set up JDK 17
@@ -55,7 +54,6 @@ jobs:
       - name: Build signed APK
         run: |
           ./gradlew assembleRelease \
-            -PversionName="${{ steps.version.outputs.version_number }}" \
             -PLASTFM_API_KEY="${{ secrets.LASTFM_API_KEY }}" \
             -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/keystore.jks \
             -Pandroid.injected.signing.store.password=${{ secrets.SIGNING_STORE_PASSWORD }} \
